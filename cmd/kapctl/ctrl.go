@@ -1,4 +1,4 @@
-// Package main is the kap CLI entrypoint.
+// Package main is the kapctl CLI entrypoint.
 package main
 
 import (

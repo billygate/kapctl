@@ -1,10 +1,10 @@
 .PHONY: build run test lint cover tidy clean
-BIN ?= bin/kap
+BIN ?= bin/kapctl
 PKG := ./...
 
 build:
 	@mkdir -p $(dir $(BIN))
-	go build -o $(BIN) ./cmd/kap
+	go build -o $(BIN) ./cmd/kapctl
 
 run: build
 	$(BIN)

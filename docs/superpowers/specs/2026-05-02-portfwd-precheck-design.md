@@ -21,7 +21,7 @@ Replace the "pick → start" flow with "pick → confirm/edit → start", with h
 
 ## Non-goals
 
-- Persisting chosen ports to `~/.config/kap/config.yaml`. The existing `Ports` map (keyed `<ctx>.<ns>` → port) is read by `cmd/kap/pgsql.go` only; this spec does not extend or read from it.
+- Persisting chosen ports to `~/.config/kapctl/config.yaml`. The existing `Ports` map (keyed `<ctx>.<ns>` → port) is read by `cmd/kapctl/pgsql.go` only; this spec does not extend or read from it.
 - Updating the `pgsql` Cobra subcommand. It continues to use `overlays.PickPort` directly without a confirm/edit form.
 - Supporting `--address 0.0.0.0`. The local-port probe binds `127.0.0.1`, matching kubectl's default.
 
@@ -258,7 +258,7 @@ Add `TestIsCustomPortChoice`:
 ## Compatibility
 
 - `Manager.Start` interface unchanged. `LocalPort != RemotePort` already works (`fmt.Sprintf("%d:%d", LocalPort, RemotePort)` in `DefaultCmdBuilder`).
-- `cmd/kap/pgsql.go` is untouched. It continues to call `overlays.PickPort` and apply the picked port as both local and remote.
+- `cmd/kapctl/pgsql.go` is untouched. It continues to call `overlays.PickPort` and apply the picked port as both local and remote.
 - `Manager`'s in-memory conflict check is retained.
 - The `Ports` config map is not read or written by this change.
 

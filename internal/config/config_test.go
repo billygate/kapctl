@@ -82,7 +82,7 @@ func TestSaveAndReload(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	savedPath := filepath.Join(dir, ".config", "kap", "config.yaml")
+	savedPath := filepath.Join(dir, ".config", "kapctl", "config.yaml")
 	if _, err := os.Stat(savedPath); err != nil {
 		t.Fatalf("saved file not found at %s: %v", savedPath, err)
 	}

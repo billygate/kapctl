@@ -1,8 +1,8 @@
-# kap
+# kapctl
 
 A keyboard-first TUI for working with Kubernetes contexts and a local
 kind cluster, written in Go on top of
-[Bubble Tea](https://github.com/charmbracelet/bubbletea). `kap` walks
+[Bubble Tea](https://github.com/charmbracelet/bubbletea). `kapctl` walks
 you through context → namespace → pod → action (logs, exec, describe,
 port-forward, delete) without leaving the terminal, manages background
 port-forwards, and — when an external `spacebox` CLI is on `PATH` —
@@ -25,7 +25,7 @@ exposes a tab for local kind cluster lifecycle.
 - Cobra subcommands for non-interactive use: `kap ctrl`, `kap pgsql`,
   `kap loc {up|down|pause|resume|status}`
 - Multiple themes (Catppuccin Mocha default, Nord) selectable via
-  `~/.config/kap/config.yaml`
+  `~/.config/kapctl/config.yaml`
 
 ## Install
 
@@ -33,7 +33,7 @@ exposes a tab for local kind cluster lifecycle.
 
 ```sh
 brew tap billygate/tap
-brew install kap
+brew install kapctl
 ```
 
 ### From source
@@ -41,7 +41,7 @@ brew install kap
 Requires Go 1.26 or newer.
 
 ```sh
-go install github.com/billygate/kap-toolsbox/cmd/kap@latest
+go install github.com/billygate/kap-toolsbox/cmd/kapctl@latest
 ```
 
 Or build from a checkout:
@@ -49,7 +49,7 @@ Or build from a checkout:
 ```sh
 git clone https://github.com/billygate/kap-toolsbox
 cd kap-toolsbox
-make build      # produces ./bin/kap
+make build      # produces ./bin/kapctl
 ```
 
 ## Usage
@@ -57,16 +57,16 @@ make build      # produces ./bin/kap
 Launch the TUI:
 
 ```sh
-kap
+kapctl
 ```
 
 Non-interactive subcommands:
 
 ```sh
-kap ctrl                 # context → namespace → pod → action picker
-kap pgsql                # interactive postgres port-forward
-kap loc up               # bring up the local kind cluster (needs spacebox)
-kap loc {down|pause|resume|status}
+kapctl ctrl                 # context → namespace → pod → action picker
+kapctl pgsql                # interactive postgres port-forward
+kapctl loc up               # bring up the local kind cluster (needs spacebox)
+kapctl loc {down|pause|resume|status}
 ```
 
 ### Keys (TUI)
@@ -84,7 +84,7 @@ kap loc {down|pause|resume|status}
 
 ## Configuration
 
-`~/.config/kap/config.yaml` (created on first run):
+`~/.config/kapctl/config.yaml` (created on first run):
 
 ```yaml
 theme: catppuccin       # or "nord"

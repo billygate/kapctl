@@ -17,8 +17,8 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "kap",
-	Short: "kap is a CLI toolbox for Kubernetes and local clusters",
+	Use:   "kapctl",
+	Short: "kapctl is a CLI toolbox for Kubernetes and local clusters",
 	Long:  `A consolidated CLI tool for managing Kubernetes resources and local kind clusters.`,
 	RunE: func(_ *cobra.Command, args []string) error {
 		if len(args) == 0 {

@@ -1238,7 +1238,7 @@ Expected: all green. Pay attention to any unused-import warnings in `explorer.go
 - [ ] **Step 6: Manual smoke test**
 
 ```
-make build && ./bin/kap
+make build && ./bin/kapctl
 ```
 
 Drive the TUI: pick a context → namespace → pod → `port-forward`. Confirm:

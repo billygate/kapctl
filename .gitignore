@@ -6,5 +6,5 @@
 *.out
 .DS_Store
 .go/
-/kap
+/kapctl
 .claude/

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build, test, lint
 
 ```bash
-make build          # → bin/kap   (preferred; never run `go build -o ./kap` at repo root)
+make build          # → bin/kapctl   (preferred; never run `go build -o ./kapctl` at repo root)
 make run
 make test           # go test ./...
 make cover          # go test -coverprofile=coverage.out  →  prints total %
@@ -19,11 +19,11 @@ Go 1.26.2. Module path is `github.com/billygate/kap-toolsbox`. Build artifacts g
 ## What this repo is
 
 A Go TUI/CLI toolbox for working with Kubernetes contexts and an
-optional local kind cluster. The `kap` binary launches a Bubble Tea
+optional local kind cluster. The `kapctl` binary launches a Bubble Tea
 tabbed app by default; Cobra subcommands (`ctrl`, `pgsql`, `loc`)
 expose the same flows non-interactively.
 
-The `LOCAL` tab and `kap loc up|down` shell out to an external
+The `LOCAL` tab and `kapctl loc up|down` shell out to an external
 `spacebox` binary on `PATH`. `spacebox` is not bundled; without it the
 tab is hidden and the `up`/`down` subcommands print a note.
 `pause`/`resume`/`status` operate directly via Docker and work
@@ -32,7 +32,7 @@ regardless.
 ## Architecture
 
 ```
-cmd/kap/main.go → Execute (Cobra)
+cmd/kapctl/main.go → Execute (Cobra)
   ├── (no args) → tui.RunApp(cfg)  — Bubble Tea TUI (EXPLORER + optional LOCAL + FORWARDS)
   ├── ctrl                          — interactive kubectl: ctx → ns → pod → {logs|exec|describe|delete}
   ├── loc {up|down|pause|resume|status}
@@ -44,7 +44,7 @@ cmd/kap/main.go → Execute (Cobra)
 - `internal/kube` — k8s.io/client-go wrapper. `NewClient(contextName)` loads kubeconfig with default loading rules; pass `""` to use current context. Sets a 120s request timeout. `GetPodRole` reads the `spilo-role` label (Spilo/Patroni Postgres operator).
 - `internal/docker` — Docker SDK wrapper around a small `clientAPI` interface (so tests can fake it). All "kind container" operations filter by label `io.x-k8s.kind.cluster`.
 - `internal/spacebox` — thin `exec.Command` shell-out to `spacebox cluster up|down`. `IsInstalled()` is used by callers (CLI subcommand and the TUI) to gate UI surface and behavior.
-- `internal/config` — plain `gopkg.in/yaml.v3` config at `~/.config/kap/config.yaml`. Holds `Theme` and `Ports` (key `<ctx>.<ns>` → port). No viper. Missing file is not an error; unknown theme falls back to `catppuccin` with a warning.
+- `internal/config` — plain `gopkg.in/yaml.v3` config at `~/.config/kapctl/config.yaml`. Holds `Theme` and `Ports` (key `<ctx>.<ns>` → port). No viper. Missing file is not an error; unknown theme falls back to `catppuccin` with a warning.
 - `internal/tui` — root tabbed app (`AppModel` in `app.go`). The tab list is built at startup: `EXPLORER` is always present, `LOCAL` is appended only when `spacebox.IsInstalled()` is true, `FORWARDS` is always present. Update/View dispatch by tab **name**, not by integer index — keep it that way when adding new tabs so the conditional doesn't break routing.
 - `internal/tui/core` — primitives shared between `tui` and its sub-packages (panes, overlays). Holds the `KubeClient`/`DockerClient` interfaces (compile-time satisfied by `*kube.Client` / `*docker.Client`), the global `Keys` map, the `ListItem`/`Separator` model + item delegate, and the `Loader` async-cancel helper. **Anything in `core` must compile without importing `tui`** — that's the whole point: it breaks the cycle between `tui` (owns the root model, imports panes) and panes (need keys, item delegate, kube/docker interfaces, shared messages).
 - `internal/tui/panes` — `Explorer` (k8s wizard: context → namespace → pod → action [→ port]) and `Local` (kind status table). Each pane owns its own list state, filter handling, and numeric jump logic. The root model only does tab switching, sizing, help, and message routing.
@@ -83,4 +83,4 @@ When adding a new async load, follow this exact shape — don't bypass the loade
 
 ### Cobra subcommands and shared state
 
-`cmd/kap/root.go` populates two package-level vars in `Execute()` before `rootCmd.Execute()`: `loadedConfig` (`*config.Config`) and `loadedStyles` (`*styles.Styles`). All sibling subcommand files (`ctrl.go`, `loc.go`, `pgsql.go`) read these directly. If you add a new subcommand and it needs config or styles, use the same pattern rather than re-loading.
+`cmd/kapctl/root.go` populates two package-level vars in `Execute()` before `rootCmd.Execute()`: `loadedConfig` (`*config.Config`) and `loadedStyles` (`*styles.Styles`). All sibling subcommand files (`ctrl.go`, `loc.go`, `pgsql.go`) read these directly. If you add a new subcommand and it needs config or styles, use the same pattern rather than re-loading.

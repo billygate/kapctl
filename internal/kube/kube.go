@@ -16,7 +16,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
-// Client is the kap-facing wrapper around a Kubernetes clientset plus
+// Client is the kapctl-facing wrapper around a Kubernetes clientset plus
 // the raw kubeconfig (used to enumerate contexts).
 type Client struct {
 	Clientset kubernetes.Interface

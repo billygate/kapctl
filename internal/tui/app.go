@@ -1,5 +1,5 @@
 // Package tui hosts the root tabbed Bubble Tea program (EXPLORER + LOCAL)
-// and the `RunApp` entrypoint invoked from the kap CLI.
+// and the `RunApp` entrypoint invoked from the kapctl CLI.
 package tui
 
 import (

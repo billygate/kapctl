@@ -15,8 +15,8 @@ builds:
     goarch:
       - amd64
       - arm64
-    main: ./cmd/kap
-    binary: kap
+    main: ./cmd/kapctl
+    binary: kapctl
 
 archives:
   - formats: [tar.gz]
@@ -45,9 +45,9 @@ changelog:
       - '^test:'
 
 homebrew_casks:
-  - name: kap
+  - name: kapctl
     binaries:
-      - kap
+      - kapctl
     repository:
       owner: billygate
       name: homebrew-tap
@@ -60,5 +60,5 @@ homebrew_casks:
         install: |
           if OS.mac?
             system_command "/usr/bin/xattr",
-              args: ["-dr", "com.apple.quarantine", "#{staged_path}/kap"]
+              args: ["-dr", "com.apple.quarantine", "#{staged_path}/kapctl"]
           end

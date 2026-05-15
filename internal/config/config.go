@@ -1,5 +1,5 @@
 // Package config loads and persists the kap user config at
-// $HOME/.config/kap/config.yaml.
+// $HOME/.config/kapctl/config.yaml.
 package config
 
 import (
@@ -11,7 +11,7 @@ import (
 )
 
 // Config is the persistent settings file loaded from
-// $HOME/.config/kap/config.yaml.
+// $HOME/.config/kapctl/config.yaml.
 type Config struct {
 	Theme string         `yaml:"theme"`
 	Ports map[string]int `yaml:"ports"` // key: "<context>.<namespace>"
@@ -34,7 +34,7 @@ func Load() (*Config, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	path := filepath.Join(home, ".config", "kap", "config.yaml")
+	path := filepath.Join(home, ".config", "kapctl", "config.yaml")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return defaults(), nil, nil
 	}
@@ -89,14 +89,14 @@ func (c *Config) SetPort(ctx, ns string, port int) {
 	c.Ports[portKey(ctx, ns)] = port
 }
 
-// Save writes the config back to $HOME/.config/kap/config.yaml,
+// Save writes the config back to $HOME/.config/kapctl/config.yaml,
 // creating directories as needed.
 func (c *Config) Save() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(home, ".config", "kap")
+	dir := filepath.Join(home, ".config", "kapctl")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
