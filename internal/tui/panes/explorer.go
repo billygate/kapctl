@@ -1,0 +1,784 @@
+// Package panes contains the per-tab Bubble Tea sub-models that the root
+// AppModel delegates to. Each pane owns its own list state, filter handling,
+// and numeric jump logic; the root model is reduced to tab switching, window
+// sizing, help, and message routing.
+package panes
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/billygate/kap-toolsbox/internal/kube"
+	"github.com/billygate/kap-toolsbox/internal/portfwd"
+	"github.com/billygate/kap-toolsbox/internal/tui/core"
+	"github.com/billygate/kap-toolsbox/internal/tui/overlays"
+	"github.com/billygate/kap-toolsbox/internal/tui/styles"
+)
+
+// ── Explorer-local async message types ──────────────────────────────────────
+
+type namespacesLoadedMsg struct{ items []string }
+type podsLoadedMsg struct{ items []kube.PodInfo }
+type podPortsLoadedMsg struct{ items []kube.ContainerPort }
+type podDeletedMsg struct{ pod string }
+type explorerLoadErrMsg struct{ err error }
+
+type explorerStep int
+
+const (
+	stepContext explorerStep = iota
+	stepNamespace
+	stepPod
+	stepAction
+	stepPort
+	stepPortForm
+)
+
+// podRow adapts kube.PodInfo to core.RowProvider for the Pod step Table.
+type podRow struct{ kube.PodInfo }
+
+func (p podRow) Cells() table.Row    { return table.Row{p.Name, p.Status, p.Age} }
+func (p podRow) FilterValue() string { return p.Name }
+
+// Explorer is the Kubernetes wizard pane: context → namespace → pod →
+// action [→ port].
+//
+// Steps that show plain labels (context, namespace, action, port) are
+// driven by a bubbles/list rendered through its own View(). The pod
+// step shows tabular data and is driven by a core.Table.
+//
+// The kube client is supplied asynchronously: NewExplorer can be called
+// with a nil client (and nil error), and AppModel later calls
+// SetKubeClient when an async core.LoadKube completes. Until then the
+// pane renders a "Connecting…" placeholder so the TUI shows immediately.
+type Explorer struct {
+	step      explorerStep
+	list      list.Model
+	podTable  *core.Table
+	ctx       string
+	ns        string
+	pod       string
+	action    string
+	filter    string
+	kube      core.KubeClient
+	err       error
+	kubeReady bool
+	styles    *styles.Styles
+	width     int
+	height    int
+	inputBuf  string
+
+	// Loader sequences async kube fetches; cached fields hold the last result.
+	loader     core.Loader
+	namespaces []string
+	pods       []kube.PodInfo
+	podPorts   []kube.ContainerPort
+
+	// loadErr holds the last async-load failure for the current step.
+	// Set on explorerLoadErrMsg, cleared on success / Back / new load.
+	// View() renders an inline error pane when this is non-nil.
+	loadErr error
+
+	// Port-form fields. Populated only when step == stepPortForm.
+	formLocal  textinput.Model
+	formRemote textinput.Model
+	formFocus  int    // 0 = local, 1 = remote
+	formErr    string // styles.Warn — blocks submit
+	formInfo   string // styles.Muted — informational (auto-bump hint)
+}
+
+// NewExplorer builds the Explorer pane. The kube client may be nil
+// (and kubeErr nil too) — the pane will render a "Connecting…"
+// placeholder until SetKubeClient is called with a live client.
+// Pass a non-nil kubeErr to render the configuration-error view.
+func NewExplorer(k core.KubeClient, kubeErr error, s *styles.Styles) *Explorer {
+	e := &Explorer{
+		step:   stepContext,
+		kube:   k,
+		err:    kubeErr,
+		styles: s,
+		podTable: core.NewTable(s, []table.Column{
+			{Title: "NAME", Width: 30},
+			{Title: "STATUS", Width: 12},
+			{Title: "AGE", Width: 10},
+		}, core.WithRowNumbers()),
+	}
+	// An empty placeholder list is required so View() / SetSize() don't
+	// dereference a zero-value list.Model before the client arrives.
+	e.list = list.New(nil, core.NewItemDelegate(s), 0, 0)
+
+	switch {
+	case kubeErr != nil:
+		e.list.Title = "Kubernetes Error"
+	case k != nil:
+		e.kubeReady = true
+		e.initView(0, 0)
+	default:
+		// Lazy: no client yet, no error. Wait for SetKubeClient.
+		e.list.Title = "Connecting to Kubernetes…"
+	}
+	return e
+}
+
+// SetKubeClient wires the kube client in asynchronously. Called by the
+// root model when core.LoadKube completes. Returns a tea.Cmd if the new
+// state requires kicking off any async fetches.
+func (e *Explorer) SetKubeClient(k core.KubeClient, err error) tea.Cmd {
+	e.kube = k
+	e.err = err
+	e.kubeReady = err == nil && k != nil
+	if e.kubeReady && e.step == stepContext {
+		e.initView(e.width, e.height)
+	}
+	return nil
+}
+
+// Init returns no startup commands; data is fetched as the user
+// navigates between steps.
+func (e *Explorer) Init() tea.Cmd { return nil }
+
+// SetSize lays out the pane at the given dimensions.
+func (e *Explorer) SetSize(w, h int) {
+	e.width, e.height = w, h
+	e.list.SetSize(w, h)
+	e.podTable.SetSize(w, h)
+}
+
+// usingTable reports whether the current step is rendered through the
+// core.Table (vs. the bubbles/list).
+func (e *Explorer) usingTable() bool { return e.step == stepPod }
+
+// Update advances the step machine, accepting kube fetch results,
+// keystrokes, and the periodic Tick.
+func (e *Explorer) Update(msg tea.Msg) (*Explorer, tea.Cmd) {
+	switch msg := msg.(type) {
+	case core.TickMsg:
+		if e.step == stepPod && e.kube != nil {
+			return e, e.loadPods()
+		}
+		return e, nil
+
+	case core.Result:
+		if !e.loader.Accept(msg.Generation) {
+			return e, nil
+		}
+		switch payload := msg.Payload.(type) {
+		case namespacesLoadedMsg:
+			e.loadErr = nil
+			e.namespaces = payload.items
+			e.initView(e.width, e.height)
+		case podsLoadedMsg:
+			e.loadErr = nil
+			e.pods = payload.items
+			e.initView(e.width, e.height)
+		case podPortsLoadedMsg:
+			e.loadErr = nil
+			e.podPorts = payload.items
+			e.initView(e.width, e.height)
+		case podDeletedMsg:
+			e.loadErr = nil
+			e.pods = nil
+			e.step = stepPod
+			e.initView(e.width, e.height)
+			cmds := []tea.Cmd{
+				func() tea.Msg {
+					return overlays.ToastMsg{Kind: overlays.ToastInfo, Text: "deleted pod " + payload.pod}
+				},
+				e.loadPods(),
+			}
+			return e, tea.Batch(cmds...)
+		case explorerLoadErrMsg:
+			// Persistent inline display; intentionally no ToastMsg so the
+			// error doesn't disappear with the toast TTL.
+			e.loadErr = payload.err
+			return e, nil
+		}
+		return e, nil
+	}
+
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		if e.usingTable() {
+			var cmd tea.Cmd
+			e.podTable, cmd = e.podTable.Update(msg)
+			return e, cmd
+		}
+		var cmd tea.Cmd
+		e.list, cmd = e.list.Update(msg)
+		return e, cmd
+	}
+
+	if e.usingTable() {
+		return e.updatePodTable(keyMsg)
+	}
+	return e.updateList(keyMsg)
+}
+
+// updatePodTable drives the table-backed Pod step.
+func (e *Explorer) updatePodTable(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
+	// While the user is typing in the table's filter input, the table
+	// owns all keys except enter (commit) and esc (cancel) — handled inside.
+	if e.podTable.FilterState() == core.TableFiltering {
+		var cmd tea.Cmd
+		e.podTable, cmd = e.podTable.Update(keyMsg)
+		return e, cmd
+	}
+
+	switch {
+	case key.Matches(keyMsg, core.Keys.Retry):
+		if e.loadErr != nil {
+			if cmd := e.retryCurrentLoad(); cmd != nil {
+				return e, cmd
+			}
+		}
+	case key.Matches(keyMsg, core.Keys.Back):
+		if e.podTable.FilterState() == core.TableFilterApplied {
+			e.podTable.ResetFilter()
+			return e, nil
+		}
+		if e.step > stepContext {
+			e.step--
+			e.loadErr = nil
+			e.initView(e.width, e.height)
+			return e, nil
+		}
+		return e, nil
+	case key.Matches(keyMsg, core.Keys.Select):
+		return e.handleTableSelect()
+	}
+
+	var cmd tea.Cmd
+	e.podTable, cmd = e.podTable.Update(keyMsg)
+
+	// Numeric digit on a single-digit list jumps and selects in one shot —
+	// match the list-flow UX.
+	s := keyMsg.String()
+	if s >= "0" && s <= "9" && e.podTable.Len() < 10 {
+		return e.handleTableSelect()
+	}
+	return e, cmd
+}
+
+// updateList drives the list-backed steps (context/namespace/action/port).
+func (e *Explorer) updateList(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
+	if e.list.FilterState() == list.Filtering {
+		if key.Matches(keyMsg, core.Keys.Select) {
+			updated, _ := e.list.Update(keyMsg)
+			e.list = updated
+			e.filter = updated.FilterValue()
+			return e.handleSelect()
+		}
+		var cmd tea.Cmd
+		e.list, cmd = e.list.Update(keyMsg)
+		return e, cmd
+	}
+
+	keyStr := keyMsg.String()
+	if keyStr >= "0" && keyStr <= "9" {
+		if model, cmd, handled := e.handleNumeric(keyStr); handled {
+			return model, cmd
+		}
+	} else {
+		e.inputBuf = ""
+	}
+
+	switch {
+	case key.Matches(keyMsg, core.Keys.Retry):
+		if e.loadErr != nil {
+			if cmd := e.retryCurrentLoad(); cmd != nil {
+				return e, cmd
+			}
+		}
+	case key.Matches(keyMsg, core.Keys.Filter):
+		e.list.ResetFilter()
+		e.filter = ""
+	case key.Matches(keyMsg, core.Keys.Back):
+		if e.list.FilterValue() != "" {
+			e.list.ResetFilter()
+			e.filter = ""
+			return e, nil
+		}
+		if e.step > stepContext {
+			e.step--
+			e.loadErr = nil
+			e.initView(e.width, e.height)
+			return e, nil
+		}
+		e.loadErr = nil
+	case key.Matches(keyMsg, core.Keys.Select):
+		return e.handleSelect()
+	}
+
+	var cmd tea.Cmd
+	e.list, cmd = e.list.Update(keyMsg)
+	return e, cmd
+}
+
+func (e *Explorer) handleNumeric(digit string) (*Explorer, tea.Cmd, bool) {
+	e.inputBuf += digit
+	idx, _ := strconv.Atoi(e.inputBuf)
+
+	// The item delegate renders a 1-based IDX that skips separators
+	// (so the user sees 1..N for selectable rows only). Numeric jump
+	// must map the typed index back to the underlying list position
+	// in the same way, otherwise typing "1" can land on a separator.
+	items := e.list.VisibleItems()
+	selectablePositions := make([]int, 0, len(items))
+	for i, it := range items {
+		if li, ok := core.AsListItem(it); ok && li.IsSeparator() {
+			continue
+		}
+		selectablePositions = append(selectablePositions, i)
+	}
+	listSize := len(selectablePositions)
+
+	commit := func() (*Explorer, tea.Cmd, bool) {
+		if idx > 0 && idx <= listSize {
+			e.list.Select(selectablePositions[idx-1])
+			e.inputBuf = ""
+			m, c := e.handleSelect()
+			return m, c, true
+		}
+		e.inputBuf = ""
+		return e, nil, true
+	}
+
+	if listSize < 10 {
+		return commit()
+	}
+	if len(e.inputBuf) == 2 {
+		return commit()
+	}
+	if idx*10 > listSize {
+		return commit()
+	}
+	return e, nil, true
+}
+
+// handleTableSelect is the Pod-step variant of handleSelect.
+func (e *Explorer) handleTableSelect() (*Explorer, tea.Cmd) {
+	sel := e.podTable.SelectedItem()
+	if sel == nil {
+		return e, nil
+	}
+	row, ok := sel.(podRow)
+	if !ok {
+		return e, nil
+	}
+	e.pod = row.Name
+	e.step = stepAction
+	e.podTable.ResetFilter()
+	e.initView(e.width, e.height)
+	return e, nil
+}
+
+func (e *Explorer) handleSelect() (*Explorer, tea.Cmd) {
+	it := e.list.SelectedItem()
+	if it == nil {
+		return e, nil
+	}
+
+	li, ok := core.AsListItem(it)
+	if !ok {
+		return e, nil
+	}
+	if li.IsSeparator() {
+		return e, nil
+	}
+	val := li.Text
+
+	e.filter = e.list.FilterValue()
+
+	switch e.step {
+	case stepContext:
+		k, err := kube.NewClient(val)
+		if err != nil {
+			// Stay on stepContext; surface the error so the user can pick
+			// a different context. Don't trash the existing client.
+			return e, func() tea.Msg {
+				return overlays.ToastMsg{Kind: overlays.ToastError, Text: err.Error()}
+			}
+		}
+		e.ctx = val
+		e.kube = k
+		e.step = stepNamespace
+		e.namespaces = nil
+		e.list.ResetFilter()
+		e.filter = ""
+		e.initView(e.width, e.height)
+		return e, e.loadNamespaces()
+	case stepNamespace:
+		e.ns = val
+		e.step = stepPod
+		e.pods = nil
+		e.list.ResetFilter()
+		e.filter = ""
+		e.initView(e.width, e.height)
+		return e, e.loadPods()
+	case stepAction:
+		if val == "port-forward" {
+			e.action = val
+			e.step = stepPort
+			e.podPorts = nil
+			e.list.ResetFilter()
+			e.filter = ""
+			e.initView(e.width, e.height)
+			return e, e.loadPodPorts()
+		}
+		return e, e.runAction(val, "")
+	case stepPort:
+		return e, e.runAction(e.action, val)
+	}
+	return e, nil
+}
+
+// loadNamespaces returns a tea.Cmd that fetches namespaces for the
+// current context. Clears e.loadErr at kick-off so a pending error
+// view is replaced with the (briefly empty) list while the load runs.
+func (e *Explorer) loadNamespaces() tea.Cmd {
+	e.loadErr = nil
+	kClient := e.kube
+	return e.loader.Start(context.Background(), func(ctx context.Context) tea.Msg {
+		items, err := kClient.GetNamespaces(ctx)
+		if err != nil {
+			return explorerLoadErrMsg{err: err}
+		}
+		return namespacesLoadedMsg{items: items}
+	})
+}
+
+// loadPods returns a tea.Cmd that fetches pods for the current namespace.
+func (e *Explorer) loadPods() tea.Cmd {
+	e.loadErr = nil
+	kClient, ns := e.kube, e.ns
+	return e.loader.Start(context.Background(), func(ctx context.Context) tea.Msg {
+		items, err := kClient.GetPods(ctx, ns)
+		if err != nil {
+			return explorerLoadErrMsg{err: err}
+		}
+		return podsLoadedMsg{items: items}
+	})
+}
+
+// loadPodPorts returns a tea.Cmd that fetches container ports for the
+// currently selected pod.
+func (e *Explorer) loadPodPorts() tea.Cmd {
+	e.loadErr = nil
+	kClient, ns, pod := e.kube, e.ns, e.pod
+	return e.loader.Start(context.Background(), func(ctx context.Context) tea.Msg {
+		items, err := kClient.GetPodPorts(ctx, ns, pod)
+		if err != nil {
+			return explorerLoadErrMsg{err: err}
+		}
+		return podPortsLoadedMsg{items: items}
+	})
+}
+
+// retryCurrentLoad re-kicks the load appropriate to the current step.
+// Returns nil for steps that have no async load (context/action/port-form).
+func (e *Explorer) retryCurrentLoad() tea.Cmd {
+	switch e.step {
+	case stepNamespace:
+		return e.loadNamespaces()
+	case stepPod:
+		return e.loadPods()
+	case stepPort:
+		return e.loadPodPorts()
+	}
+	return nil
+}
+
+// initView builds the data-bound widget for the current step. For
+// stepPod that's the Table; otherwise it's the bubbles/list.
+func (e *Explorer) initView(w, availableH int) {
+	if e.step == stepPod {
+		e.populatePodTable(w, availableH)
+		return
+	}
+	e.initList(w, availableH)
+}
+
+// populatePodTable hands the current pod set to the Table.
+func (e *Explorer) populatePodTable(w, availableH int) {
+	items := make([]core.RowProvider, 0, len(e.pods))
+	for _, p := range e.pods {
+		items = append(items, podRow{PodInfo: p})
+	}
+	e.podTable.SetItems(items)
+	if w > 0 && availableH > 0 {
+		e.podTable.SetSize(w, availableH)
+	}
+}
+
+func (e *Explorer) initList(w, availableH int) {
+	oldIdx := e.list.Index()
+
+	var items []list.Item
+	title := ""
+	switch e.step {
+	case stepContext:
+		title = "Select Context"
+		contexts := e.kube.GetContexts()
+		sort.Strings(contexts)
+		for _, c := range contexts {
+			items = append(items, core.Item(c))
+		}
+	case stepNamespace:
+		title = "Select Namespace (" + e.ctx + ")"
+		for _, n := range e.namespaces {
+			items = append(items, core.Item(n))
+		}
+	case stepAction:
+		title = "Action for " + e.pod
+		for _, a := range []string{"logs", "exec", "describe", "port-forward", "delete"} {
+			items = append(items, core.Item(a))
+		}
+	case stepPort:
+		title = "Select Port for " + e.pod
+		items = e.buildPortItems()
+	}
+
+	e.list = list.New(items, core.NewItemDelegate(e.styles), w, availableH)
+	e.list.Title = title
+	e.list.SetShowStatusBar(false)
+	e.list.SetFilteringEnabled(true)
+	e.list.Styles.Title = e.styles.Title
+	e.list.SetShowHelp(false)
+	// Suppress the list's built-in title — Explorer.View renders its
+	// own pane title via styles.Title.Render(e.viewTitle()), and the
+	// list would otherwise render a duplicate underneath.
+	e.list.SetShowTitle(false)
+
+	if e.filter != "" {
+		e.list.FilterInput.SetValue(e.filter)
+		e.list.SetFilterState(list.FilterApplied)
+	}
+
+	if oldIdx >= 0 && oldIdx < len(items) {
+		e.list.Select(oldIdx)
+	}
+}
+
+func (e *Explorer) buildPortItems() []list.Item {
+	choices := overlays.BuildPortChoices(e.podPorts)
+	var items []list.Item
+	for _, label := range choices {
+		if strings.HasPrefix(label, "──") {
+			items = append(items, core.Separator(label))
+		} else {
+			items = append(items, core.Item(label))
+		}
+	}
+	return items
+}
+
+// View renders the current step (or an error/connecting placeholder).
+func (e *Explorer) View(_, _ int) string {
+	if e.err != nil {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			e.styles.Title.Render("Kubernetes Configuration Error"),
+			"",
+			e.styles.Warn.Render("Could not initialize Kubernetes client:"),
+			"",
+			e.err.Error(),
+			"",
+			e.styles.Muted.Render("Please ensure your KUBECONFIG is set correctly."),
+		)
+	}
+
+	if !e.kubeReady {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			e.styles.Title.Render("Connecting to Kubernetes…"),
+			"",
+			e.styles.Muted.Render("Loading kubeconfig in the background."),
+		)
+	}
+
+	if e.loadErr != nil {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			e.styles.Title.Render(e.viewTitle()),
+			"",
+			e.styles.Warn.Render("Failed to load:"),
+			"",
+			e.loadErr.Error(),
+			"",
+			e.styles.Muted.Render("r: retry  •  esc: back"),
+		)
+	}
+
+	title := e.styles.Title.Render(e.viewTitle())
+
+	var content string
+	switch e.step {
+	case stepPortForm:
+		content = e.viewPortForm()
+	case stepPod:
+		if len(e.pods) == 0 {
+			content = "No pods found"
+		} else {
+			content = e.podTable.View()
+		}
+	default:
+		content = e.list.View()
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, title, "", content)
+}
+
+// viewPortForm renders the two-field port-mapping form with footnotes.
+func (e *Explorer) viewPortForm() string {
+	rows := []string{
+		"  Local  : " + e.formLocal.View(),
+		"  Remote : " + e.formRemote.View(),
+		"",
+	}
+	switch {
+	case e.formErr != "":
+		rows = append(rows, "  "+e.styles.Warn.Render(e.formErr))
+	case e.formInfo != "":
+		rows = append(rows, "  "+e.styles.Muted.Render("ℹ  "+e.formInfo))
+	}
+	rows = append(rows, "")
+	rows = append(rows, e.styles.Muted.Render("  tab: switch field  •  enter: start  •  esc: back"))
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// viewTitle is the human-readable title for the current step.
+func (e *Explorer) viewTitle() string {
+	switch e.step {
+	case stepContext:
+		return "Select Context"
+	case stepNamespace:
+		return "Select Namespace (" + e.ctx + ")"
+	case stepPod:
+		return "Select Pod (" + e.ns + ")"
+	case stepAction:
+		return "Action for " + e.pod
+	case stepPort:
+		return "Select Port for " + e.pod
+	case stepPortForm:
+		return "Port-forward for " + e.pod
+	}
+	return ""
+}
+
+// enterPortForm transitions the wizard into stepPortForm. If local > 0,
+// IsLocalPortFree is probed against it; on miss, FindFreeLocalPort
+// scans up to 100 ports forward. The Local field is populated with the
+// resulting (possibly bumped) value; Remote is always populated with
+// the picked value as-is. local == 0 (and remote == 0) means custom —
+// both fields stay empty and no probe runs.
+func (e *Explorer) enterPortForm(local, remote int) {
+	e.formLocal = newPortInput()
+	e.formRemote = newPortInput()
+	e.formErr = ""
+	e.formInfo = ""
+	e.formFocus = 0
+	e.formLocal.Focus()
+
+	switch {
+	case local == 0 && remote == 0:
+		// Custom — leave fields empty.
+	default:
+		actualLocal := local
+		if err := portfwd.IsLocalPortFree(local); err != nil {
+			bumped, ferr := portfwd.FindFreeLocalPort(local, 100)
+			switch {
+			case ferr != nil:
+				e.formErr = fmt.Sprintf("could not find a free local port in [%d, %d]", local, local+100)
+			default:
+				actualLocal = bumped
+				e.formInfo = fmt.Sprintf("local %d was in use, using %d", local, bumped)
+			}
+		}
+		e.formLocal.SetValue(strconv.Itoa(actualLocal))
+		e.formRemote.SetValue(strconv.Itoa(remote))
+	}
+
+	e.step = stepPortForm
+}
+
+// newPortInput builds a digit-only textinput sized for a port number.
+func newPortInput() textinput.Model {
+	ti := textinput.New()
+	ti.CharLimit = 5
+	ti.Width = 8
+	ti.Validate = func(s string) error {
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return fmt.Errorf("digits only")
+			}
+		}
+		return nil
+	}
+	return ti
+}
+
+func (e *Explorer) runAction(action, port string) tea.Cmd {
+	// port-forward is special: it runs as a managed background process
+	// so the TUI stays interactive. The other actions (logs, exec,
+	// describe) are foreground — tea.ExecProcess suspends the TUI for
+	// their duration, which is the right UX.
+	if action == "delete" {
+		e.loadErr = nil
+		kClient, ns, pod := e.kube, e.ns, e.pod
+		return e.loader.Start(context.Background(), func(ctx context.Context) tea.Msg {
+			if err := kClient.DeletePod(ctx, ns, pod); err != nil {
+				return explorerLoadErrMsg{err: err}
+			}
+			return podDeletedMsg{pod: pod}
+		})
+	}
+	if action == "port-forward" {
+		p, err := overlays.ParsePort(port)
+		if err != nil {
+			return func() tea.Msg {
+				return overlays.ToastMsg{Kind: overlays.ToastError, Text: "invalid port: " + port}
+			}
+		}
+		ctx, ns, pod := e.ctx, e.ns, e.pod
+		return func() tea.Msg {
+			return core.PortForwardRequestMsg{
+				Context: ctx, Namespace: ns, Target: pod,
+				Kind:       portfwd.KindPod,
+				LocalPort:  p,
+				RemotePort: p,
+			}
+		}
+	}
+	return tea.ExecProcess(buildExplorerCmd(e.ctx, e.ns, e.pod, action, port), func(_ error) tea.Msg {
+		return nil
+	})
+}
+
+// buildExplorerCmd shapes the kubectl invocation for foreground actions
+// (logs/exec/describe). port-forward is handled separately via the
+// portfwd manager — see runAction.
+func buildExplorerCmd(ctx, ns, pod, action, _ string) *exec.Cmd {
+	var args []string
+	switch action {
+	case "logs":
+		args = []string{"--context", ctx, "-n", ns, "logs", "-f", pod}
+	case "exec":
+		args = []string{"--context", ctx, "-n", ns, "exec", "-it", pod, "--", "sh"}
+	case "describe":
+		args = []string{"--context", ctx, "-n", ns, "describe", "pod", pod}
+	}
+	c := exec.Command("kubectl", args...)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	c.Stdin = os.Stdin
+	return c
+}
