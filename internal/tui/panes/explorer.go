@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,16 @@ import (
 	"github.com/billygate/kap-toolsbox/internal/tui/overlays"
 	"github.com/billygate/kap-toolsbox/internal/tui/styles"
 )
+
+// newKubeClient is the package-level handle to kube.NewClient that
+// tests can override to avoid depending on a real kubeconfig.
+var newKubeClient = kube.NewClient
+
+// newKubeClientForTest / setNewKubeClientForTest are test seams used
+// by panes_test.go to swap the kube client factory without touching
+// the real kubeconfig.
+func newKubeClientForTest() func(string) (*kube.Client, error)    { return newKubeClient }
+func setNewKubeClientForTest(fn func(string) (*kube.Client, error)) { newKubeClient = fn }
 
 // ResumeStore is the slice of *config.Config that Explorer needs in
 // order to persist and read the last-selected context/namespace.
@@ -170,7 +181,7 @@ func (e *Explorer) SetKubeClient(k core.KubeClient, err error) tea.Cmd {
 	}
 
 	savedCtx := e.resume.LastContext()
-	if !containsString(k.GetContexts(), savedCtx) {
+	if !slices.Contains(k.GetContexts(), savedCtx) {
 		e.resume.SetLastContext("")
 		e.resume.SetLastNamespace("")
 		saveCmd := e.saveResume()
@@ -181,6 +192,15 @@ func (e *Explorer) SetKubeClient(k core.KubeClient, err error) tea.Cmd {
 		})
 	}
 
+	k2, cerr := newKubeClient(savedCtx)
+	if cerr != nil {
+		e.step = stepContext
+		e.initView(e.width, e.height)
+		return func() tea.Msg {
+			return overlays.ToastMsg{Kind: overlays.ToastError, Text: cerr.Error()}
+		}
+	}
+	e.kube = k2
 	e.ctx = savedCtx
 
 	if e.resume.LastNamespace() == "" {
@@ -195,16 +215,6 @@ func (e *Explorer) SetKubeClient(k core.KubeClient, err error) tea.Cmd {
 	e.pods = nil
 	e.initView(e.width, e.height)
 	return e.loadPods()
-}
-
-// containsString reports whether v is present in xs.
-func containsString(xs []string, v string) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
 
 // saveResume returns a tea.Cmd that calls Save() and emits a toast on
@@ -484,7 +494,7 @@ func (e *Explorer) handleSelect() (*Explorer, tea.Cmd) {
 			e.resume.SetLastContext(val)
 			e.resume.SetLastNamespace("")
 		}
-		k, err := kube.NewClient(val)
+		k, err := newKubeClient(val)
 		if err != nil {
 			return e, tea.Batch(
 				e.saveResume(),

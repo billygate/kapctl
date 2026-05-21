@@ -79,6 +79,27 @@ func newTestStyles() *styles.Styles {
 	return styles.New(p)
 }
 
+// withFakeKubeClient swaps the package-level newKubeClient seam so
+// tests don't depend on a real kubeconfig. Returns a restore func that
+// the test must defer.
+func withFakeKubeClient(t *testing.T, k core.KubeClient) {
+	t.Helper()
+	_ = k
+	orig := newKubeClientForTest()
+	setNewKubeClientForTest(func(_ string) (*kube.Client, error) {
+		// We can't return a *kube.Client of our own — but tests don't need
+		// the typed value, only that the call succeeds and the Explorer
+		// then proceeds with the new client. The Explorer.SetKubeClient
+		// path assigns the result to e.kube (which is core.KubeClient),
+		// so we return a zero-value client and rely on later tests not
+		// to call into it. The auto-resume tests assert only state
+		// transitions (step) and selection, which do not require the
+		// new client to actually work.
+		return &kube.Client{}, nil
+	})
+	t.Cleanup(func() { setNewKubeClientForTest(orig) })
+}
+
 // ── Explorer pane tests ──────────────────────────────────────────────────────
 
 func TestExplorerInitReturnsNilCmd(t *testing.T) {
@@ -742,6 +763,7 @@ func TestExplorerAutoResumeContextOnly(t *testing.T) {
 	r := &fakeResume{ctx: "alpha"}
 	mk := &mockKubeClient{contexts: []string{"alpha", "beta"}, namespaces: []string{"x", "y"}}
 
+	withFakeKubeClient(t, mk)
 	// Construct in the lazy state (no kube yet), then deliver the client.
 	e := NewExplorer(nil, nil, s, r)
 	e.SetSize(80, 24)
@@ -760,6 +782,7 @@ func TestExplorerAutoResumeContextAndNamespace(t *testing.T) {
 	r := &fakeResume{ctx: "alpha", ns: "payments"}
 	mk := &mockKubeClient{contexts: []string{"alpha"}, pods: []kube.PodInfo{}}
 
+	withFakeKubeClient(t, mk)
 	e := NewExplorer(nil, nil, s, r)
 	e.SetSize(80, 24)
 	_ = e.SetKubeClient(mk, nil)
