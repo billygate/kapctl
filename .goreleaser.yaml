@@ -53,7 +53,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"
     directory: Casks
-    homepage: "https://github.com/billygate/kap-toolsbox"
+    homepage: "https://github.com/billygate/kapctl"
     description: "Keyboard-first TUI for Kubernetes contexts and port-forwards"
     hooks:
       post:
