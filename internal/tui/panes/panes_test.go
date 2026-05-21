@@ -85,8 +85,8 @@ func newTestStyles() *styles.Styles {
 func withFakeKubeClient(t *testing.T, k core.KubeClient) {
 	t.Helper()
 	_ = k
-	orig := newKubeClientForTest()
-	setNewKubeClientForTest(func(_ string) (*kube.Client, error) {
+	orig := newKubeClient
+	newKubeClient = func(_ string) (*kube.Client, error) {
 		// We can't return a *kube.Client of our own — but tests don't need
 		// the typed value, only that the call succeeds and the Explorer
 		// then proceeds with the new client. The Explorer.SetKubeClient
@@ -96,8 +96,8 @@ func withFakeKubeClient(t *testing.T, k core.KubeClient) {
 		// transitions (step) and selection, which do not require the
 		// new client to actually work.
 		return &kube.Client{}, nil
-	})
-	t.Cleanup(func() { setNewKubeClientForTest(orig) })
+	}
+	t.Cleanup(func() { newKubeClient = orig })
 }
 
 // ── Explorer pane tests ──────────────────────────────────────────────────────

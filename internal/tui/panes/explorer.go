@@ -29,14 +29,9 @@ import (
 )
 
 // newKubeClient is the package-level handle to kube.NewClient that
-// tests can override to avoid depending on a real kubeconfig.
+// tests in this package can override (it is unexported) to avoid
+// depending on a real kubeconfig.
 var newKubeClient = kube.NewClient
-
-// newKubeClientForTest / setNewKubeClientForTest are test seams used
-// by panes_test.go to swap the kube client factory without touching
-// the real kubeconfig.
-func newKubeClientForTest() func(string) (*kube.Client, error)    { return newKubeClient }
-func setNewKubeClientForTest(fn func(string) (*kube.Client, error)) { newKubeClient = fn }
 
 // ResumeStore is the slice of *config.Config that Explorer needs in
 // order to persist and read the last-selected context/namespace.
