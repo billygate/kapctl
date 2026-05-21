@@ -33,7 +33,7 @@ import (
 // depending on a real kubeconfig.
 var newKubeClient = kube.NewClient
 
-// ResumeStore is the slice of *config.Config that Explorer needs in
+// ResumeStore is the subset of *config.Config that Explorer needs in
 // order to persist and read the last-selected context/namespace.
 // Declaring it here keeps panes free of a direct config import.
 type ResumeStore interface {
@@ -143,6 +143,9 @@ func NewExplorer(k core.KubeClient, kubeErr error, s *styles.Styles, cfg ResumeS
 	case kubeErr != nil:
 		e.list.Title = "Kubernetes Error"
 	case k != nil:
+		// Eager construction path (tests only) — auto-resume is wired
+		// exclusively in SetKubeClient, so a caller that pre-wires a
+		// client must not also rely on cfg.LastContext().
 		e.kubeReady = true
 		e.initView(0, 0)
 	default:
@@ -214,6 +217,8 @@ func (e *Explorer) SetKubeClient(k core.KubeClient, err error) tea.Cmd {
 
 // saveResume returns a tea.Cmd that calls Save() and emits a toast on
 // failure. Safe to call when e.resume == nil — returns nil in that case.
+// Captures e.resume into a local so a later assignment can't redirect
+// the deferred Save() to a different store.
 func (e *Explorer) saveResume() tea.Cmd {
 	if e.resume == nil {
 		return nil

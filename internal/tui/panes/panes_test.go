@@ -80,11 +80,10 @@ func newTestStyles() *styles.Styles {
 }
 
 // withFakeKubeClient swaps the package-level newKubeClient seam so
-// tests don't depend on a real kubeconfig. Returns a restore func that
-// the test must defer.
-func withFakeKubeClient(t *testing.T, k core.KubeClient) {
+// tests don't depend on a real kubeconfig. Cleanup is registered via
+// t.Cleanup — callers do not need to defer anything.
+func withFakeKubeClient(t *testing.T, _ core.KubeClient) {
 	t.Helper()
-	_ = k
 	orig := newKubeClient
 	newKubeClient = func(_ string) (*kube.Client, error) {
 		// We can't return a *kube.Client of our own — but tests don't need
