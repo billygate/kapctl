@@ -825,3 +825,57 @@ func TestExplorerAutoResumeNoStateStaysOnContext(t *testing.T) {
 		t.Errorf("step = %v, want stepContext when no saved state", e.step)
 	}
 }
+
+func TestExplorerBackClearsNsFromPodStep(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"alpha"}, namespaces: []string{"payments"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.step = stepPod
+	e.ctx = "alpha"
+	e.ns = "payments"
+	e.initView(80, 24)
+
+	next, _ := e.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	ctx, ns := next.Selection()
+	if ns != "" {
+		t.Errorf("ns = %q after esc from stepPod, want empty", ns)
+	}
+	if ctx != "alpha" {
+		t.Errorf("ctx = %q after esc from stepPod, want alpha (preserved)", ctx)
+	}
+}
+
+func TestExplorerBackClearsCtxFromNamespaceStep(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"alpha", "beta"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.step = stepNamespace
+	e.ctx = "alpha"
+	e.initView(80, 24)
+
+	next, _ := e.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	ctx, _ := next.Selection()
+	if ctx != "" {
+		t.Errorf("ctx = %q after esc from stepNamespace, want empty", ctx)
+	}
+}
+
+func TestExplorerBackDoesNotTouchResumeStore(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"alpha"}, namespaces: []string{"payments"}}
+	r := &fakeResume{ctx: "alpha", ns: "payments"}
+	e := NewExplorer(mk, nil, s, r)
+	e.SetSize(80, 24)
+	e.step = stepPod
+	e.ctx = "alpha"
+	e.ns = "payments"
+	e.initView(80, 24)
+
+	e.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if r.ctx != "alpha" || r.ns != "payments" {
+		t.Errorf("Back should not touch ResumeStore, got ctx=%q ns=%q (want alpha/payments)", r.ctx, r.ns)
+	}
+}

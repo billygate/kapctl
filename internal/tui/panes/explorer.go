@@ -338,6 +338,12 @@ func (e *Explorer) updatePodTable(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
 		if e.step > stepContext {
 			e.step--
 			e.loadErr = nil
+			if e.step < stepPod {
+				e.ns = ""
+			}
+			if e.step < stepNamespace {
+				e.ctx = ""
+			}
 			e.initView(e.width, e.height)
 			return e, nil
 		}
@@ -400,6 +406,15 @@ func (e *Explorer) updateList(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
 		if e.step > stepContext {
 			e.step--
 			e.loadErr = nil
+			// Clear the selection that the user is stepping past so the
+			// breadcrumb stays truthful. Do NOT update the resume store
+			// here — persist is forward-only by design.
+			if e.step < stepPod {
+				e.ns = ""
+			}
+			if e.step < stepNamespace {
+				e.ctx = ""
+			}
 			e.initView(e.width, e.height)
 			return e, nil
 		}
