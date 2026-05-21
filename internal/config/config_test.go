@@ -95,6 +95,35 @@ func TestLastSelectionRoundtrip(t *testing.T) {
 	}
 }
 
+func TestLastSelectionClearRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	cfg := &config.Config{Theme: "catppuccin", Ports: map[string]int{}}
+	cfg.SetLastContext("prod-eu")
+	cfg.SetLastNamespace("payments")
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cfg.SetLastContext("")
+	cfg.SetLastNamespace("")
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save after clear: %v", err)
+	}
+
+	loaded, _, err := config.LoadFile(filepath.Join(dir, ".config", "kapctl", "config.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if got := loaded.LastContext(); got != "" {
+		t.Errorf("LastContext after clear = %q, want empty", got)
+	}
+	if got := loaded.LastNamespace(); got != "" {
+		t.Errorf("LastNamespace after clear = %q, want empty", got)
+	}
+}
+
 func TestSaveAndReload(t *testing.T) {
 	dir := t.TempDir()
 	// Override HOME so Save() writes to our temp dir
