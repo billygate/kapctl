@@ -27,6 +27,17 @@ import (
 	"github.com/billygate/kap-toolsbox/internal/tui/styles"
 )
 
+// ResumeStore is the slice of *config.Config that Explorer needs in
+// order to persist and read the last-selected context/namespace.
+// Declaring it here keeps panes free of a direct config import.
+type ResumeStore interface {
+	LastContext() string
+	LastNamespace() string
+	SetLastContext(string)
+	SetLastNamespace(string)
+	Save() error
+}
+
 // ── Explorer-local async message types ──────────────────────────────────────
 
 type namespacesLoadedMsg struct{ items []string }
@@ -97,18 +108,21 @@ type Explorer struct {
 	formFocus  int    // 0 = local, 1 = remote
 	formErr    string // styles.Warn — blocks submit
 	formInfo   string // styles.Muted — informational (auto-bump hint)
+
+	resume ResumeStore
 }
 
 // NewExplorer builds the Explorer pane. The kube client may be nil
 // (and kubeErr nil too) — the pane will render a "Connecting…"
 // placeholder until SetKubeClient is called with a live client.
 // Pass a non-nil kubeErr to render the configuration-error view.
-func NewExplorer(k core.KubeClient, kubeErr error, s *styles.Styles) *Explorer {
+func NewExplorer(k core.KubeClient, kubeErr error, s *styles.Styles, cfg ResumeStore) *Explorer {
 	e := &Explorer{
 		step:   stepContext,
 		kube:   k,
 		err:    kubeErr,
 		styles: s,
+		resume: cfg,
 		podTable: core.NewTable(s, []table.Column{
 			{Title: "NAME", Width: 30},
 			{Title: "STATUS", Width: 12},
@@ -132,6 +146,10 @@ func NewExplorer(k core.KubeClient, kubeErr error, s *styles.Styles) *Explorer {
 	return e
 }
 
+// Selection returns the currently selected context and namespace, either
+// of which may be empty if the user has not yet picked them.
+func (e *Explorer) Selection() (ctx, ns string) { return e.ctx, e.ns }
+
 // SetKubeClient wires the kube client in asynchronously. Called by the
 // root model when core.LoadKube completes. Returns a tea.Cmd if the new
 // state requires kicking off any async fetches.
@@ -139,10 +157,69 @@ func (e *Explorer) SetKubeClient(k core.KubeClient, err error) tea.Cmd {
 	e.kube = k
 	e.err = err
 	e.kubeReady = err == nil && k != nil
-	if e.kubeReady && e.step == stepContext {
-		e.initView(e.width, e.height)
+	if !e.kubeReady {
+		return nil
 	}
-	return nil
+
+	// No saved state — behave exactly as before.
+	if e.resume == nil || e.resume.LastContext() == "" {
+		if e.step == stepContext {
+			e.initView(e.width, e.height)
+		}
+		return nil
+	}
+
+	savedCtx := e.resume.LastContext()
+	if !containsString(k.GetContexts(), savedCtx) {
+		e.resume.SetLastContext("")
+		e.resume.SetLastNamespace("")
+		saveCmd := e.saveResume()
+		e.step = stepContext
+		e.initView(e.width, e.height)
+		return tea.Batch(saveCmd, func() tea.Msg {
+			return overlays.ToastMsg{Kind: overlays.ToastInfo, Text: "saved context " + savedCtx + " not in kubeconfig, starting fresh"}
+		})
+	}
+
+	e.ctx = savedCtx
+
+	if e.resume.LastNamespace() == "" {
+		e.step = stepNamespace
+		e.namespaces = nil
+		e.initView(e.width, e.height)
+		return e.loadNamespaces()
+	}
+
+	e.ns = e.resume.LastNamespace()
+	e.step = stepPod
+	e.pods = nil
+	e.initView(e.width, e.height)
+	return e.loadPods()
+}
+
+// containsString reports whether v is present in xs.
+func containsString(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// saveResume returns a tea.Cmd that calls Save() and emits a toast on
+// failure. Safe to call when e.resume == nil — returns nil in that case.
+func (e *Explorer) saveResume() tea.Cmd {
+	if e.resume == nil {
+		return nil
+	}
+	r := e.resume
+	return func() tea.Msg {
+		if err := r.Save(); err != nil {
+			return overlays.ToastMsg{Kind: overlays.ToastError, Text: "saving config: " + err.Error()}
+		}
+		return nil
+	}
 }
 
 // Init returns no startup commands; data is fetched as the user
@@ -403,13 +480,18 @@ func (e *Explorer) handleSelect() (*Explorer, tea.Cmd) {
 
 	switch e.step {
 	case stepContext:
+		if e.resume != nil {
+			e.resume.SetLastContext(val)
+			e.resume.SetLastNamespace("")
+		}
 		k, err := kube.NewClient(val)
 		if err != nil {
-			// Stay on stepContext; surface the error so the user can pick
-			// a different context. Don't trash the existing client.
-			return e, func() tea.Msg {
-				return overlays.ToastMsg{Kind: overlays.ToastError, Text: err.Error()}
-			}
+			return e, tea.Batch(
+				e.saveResume(),
+				func() tea.Msg {
+					return overlays.ToastMsg{Kind: overlays.ToastError, Text: err.Error()}
+				},
+			)
 		}
 		e.ctx = val
 		e.kube = k
@@ -418,15 +500,18 @@ func (e *Explorer) handleSelect() (*Explorer, tea.Cmd) {
 		e.list.ResetFilter()
 		e.filter = ""
 		e.initView(e.width, e.height)
-		return e, e.loadNamespaces()
+		return e, tea.Batch(e.saveResume(), e.loadNamespaces())
 	case stepNamespace:
 		e.ns = val
+		if e.resume != nil {
+			e.resume.SetLastNamespace(val)
+		}
 		e.step = stepPod
 		e.pods = nil
 		e.list.ResetFilter()
 		e.filter = ""
 		e.initView(e.width, e.height)
-		return e, e.loadPods()
+		return e, tea.Batch(e.saveResume(), e.loadPods())
 	case stepAction:
 		if val == "port-forward" {
 			e.action = val

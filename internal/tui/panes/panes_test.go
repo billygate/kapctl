@@ -83,7 +83,7 @@ func newTestStyles() *styles.Styles {
 
 func TestExplorerInitReturnsNilCmd(t *testing.T) {
 	s := newTestStyles()
-	e := NewExplorer(nil, errors.New("no kube"), s)
+	e := NewExplorer(nil, errors.New("no kube"), s, nil)
 	if cmd := e.Init(); cmd != nil {
 		t.Error("Explorer.Init() should return nil when kube err is set")
 	}
@@ -91,7 +91,7 @@ func TestExplorerInitReturnsNilCmd(t *testing.T) {
 
 func TestExplorerSetSize(t *testing.T) {
 	s := newTestStyles()
-	e := NewExplorer(nil, errors.New("no kube"), s)
+	e := NewExplorer(nil, errors.New("no kube"), s, nil)
 	e.SetSize(100, 40)
 	if e.width != 100 {
 		t.Errorf("width = %d, want 100", e.width)
@@ -103,7 +103,7 @@ func TestExplorerSetSize(t *testing.T) {
 
 func TestExplorerViewErrorState(t *testing.T) {
 	s := newTestStyles()
-	e := NewExplorer(nil, errors.New("kubeconfig not found"), s)
+	e := NewExplorer(nil, errors.New("kubeconfig not found"), s, nil)
 	v := e.View(80, 20)
 	if v == "" {
 		t.Error("View should render error message when kube error is set")
@@ -113,7 +113,7 @@ func TestExplorerViewErrorState(t *testing.T) {
 func TestExplorerUpdateWindowSize(t *testing.T) {
 	t.Helper()
 	s := newTestStyles()
-	e := NewExplorer(nil, errors.New("no kube"), s)
+	e := NewExplorer(nil, errors.New("no kube"), s, nil)
 	msg := tea.WindowSizeMsg{Width: 120, Height: 40}
 	next, _ := e.Update(msg)
 	_ = next
@@ -122,7 +122,7 @@ func TestExplorerUpdateWindowSize(t *testing.T) {
 func TestExplorerUpdateBackKey(t *testing.T) {
 	t.Helper()
 	s := newTestStyles()
-	e := NewExplorer(nil, errors.New("no kube"), s)
+	e := NewExplorer(nil, errors.New("no kube"), s, nil)
 	// Back key on step 0 (context) is a no-op
 	msg := tea.KeyMsg{Type: tea.KeyEsc}
 	next, _ := e.Update(msg)
@@ -132,7 +132,7 @@ func TestExplorerUpdateBackKey(t *testing.T) {
 func TestExplorerUpdateKeyForwardsToList(t *testing.T) {
 	t.Helper()
 	s := newTestStyles()
-	e := NewExplorer(nil, errors.New("no kube"), s)
+	e := NewExplorer(nil, errors.New("no kube"), s, nil)
 	msg := tea.KeyMsg{Type: tea.KeyDown}
 	_, _ = e.Update(msg)
 }
@@ -140,7 +140,7 @@ func TestExplorerUpdateKeyForwardsToList(t *testing.T) {
 func TestExplorerUpdateSelectOnError(t *testing.T) {
 	t.Helper()
 	s := newTestStyles()
-	e := NewExplorer(nil, errors.New("no kube"), s)
+	e := NewExplorer(nil, errors.New("no kube"), s, nil)
 	msg := tea.KeyMsg{Type: tea.KeyEnter}
 	_, _ = e.Update(msg)
 }
@@ -151,7 +151,7 @@ func TestExplorerWithMockKubeInitList(t *testing.T) {
 		contexts:       []string{"ctx-a", "ctx-b"},
 		currentContext: "ctx-a",
 	}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	if e.step != stepContext {
 		t.Errorf("initial step = %v, want stepContext", e.step)
 	}
@@ -164,7 +164,7 @@ func TestExplorerWithMockKubeInitList(t *testing.T) {
 func TestExplorerSetSizeWithMockKube(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.SetSize(120, 40)
 	if e.width != 120 || e.height != 40 {
 		t.Errorf("SetSize failed: width=%d height=%d", e.width, e.height)
@@ -174,7 +174,7 @@ func TestExplorerSetSizeWithMockKube(t *testing.T) {
 func TestExplorerViewWithMockKube(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a", "ctx-b"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.SetSize(80, 20)
 	v := e.View(80, 20)
 	if v == "" {
@@ -186,7 +186,7 @@ func TestExplorerUpdateFilterKey(t *testing.T) {
 	t.Helper()
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")}
 	_, _ = e.Update(msg)
 }
@@ -195,7 +195,7 @@ func TestExplorerUpdateNumericKey(t *testing.T) {
 	t.Helper()
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a", "ctx-b", "ctx-c"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")}
 	_, _ = e.Update(msg)
 }
@@ -203,7 +203,7 @@ func TestExplorerUpdateNumericKey(t *testing.T) {
 func TestExplorerUpdateEscBack(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	// Pressing esc on step 0 is a no-op (step stays 0)
 	msg := tea.KeyMsg{Type: tea.KeyEsc}
 	next, _ := e.Update(msg)
@@ -216,7 +216,7 @@ func TestExplorerUpdateCoreResultStale(t *testing.T) {
 	t.Helper()
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	// Gen=0 matches initial loader gen, so it's accepted
 	msg := core.Result{Generation: 0, Payload: namespacesLoadedMsg{items: []string{"ns-1", "ns-2"}}}
 	next, _ := e.Update(msg)
@@ -227,7 +227,7 @@ func TestExplorerUpdateNonKeyMsg(t *testing.T) {
 	t.Helper()
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	// Non-key, non-result message should be forwarded to the list
 	msg := tea.WindowSizeMsg{Width: 80, Height: 20}
 	_, _ = e.Update(msg)
@@ -236,7 +236,7 @@ func TestExplorerUpdateNonKeyMsg(t *testing.T) {
 func TestExplorerInitListStepAction(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	// Jump to stepAction manually
 	e.step = stepAction
 	e.ctx = "ctx-a"
@@ -252,7 +252,7 @@ func TestExplorerInitListStepAction(t *testing.T) {
 func TestExplorerInitListStepNamespace(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.step = stepNamespace
 	e.namespaces = []string{"billing", "default", "kube-system"}
 	e.initList(80, 20)
@@ -264,7 +264,7 @@ func TestExplorerInitListStepNamespace(t *testing.T) {
 func TestExplorerRenderPodTable(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.step = stepPod
 	e.pods = []kube.PodInfo{
 		{Name: "pg-0", Status: "Running", Restarts: 0, Age: "1h", Ports: []int32{5432}},
@@ -280,7 +280,7 @@ func TestExplorerRenderPodTable(t *testing.T) {
 func TestExplorerBuildPortItems(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.podPorts = []kube.ContainerPort{{Name: "http", Port: 8080}}
 	items := e.buildPortItems()
 	if len(items) == 0 {
@@ -480,7 +480,7 @@ func TestMaxHelper(t *testing.T) {
 func TestExplorerRenderPodTableEmpty(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.step = stepPod
 	e.initList(80, 20) // no pods loaded
 	view := e.View(80, 20)
@@ -523,7 +523,7 @@ func TestLocalSetDockerClientTriggersFetch(t *testing.T) {
 
 func TestExplorerSetKubeClientReady(t *testing.T) {
 	s := newTestStyles()
-	e := NewExplorer(nil, nil, s)
+	e := NewExplorer(nil, nil, s, nil)
 	// Pane starts in not-ready state: View should render the connecting placeholder.
 	if v := e.View(80, 20); v == "" {
 		t.Fatal("View() should render even when kube is not yet ready")
@@ -541,7 +541,7 @@ func TestExplorerSetKubeClientReady(t *testing.T) {
 func TestExplorerEnterPortFormWithBumpedLocal(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.podPorts = []kube.ContainerPort{{Name: "pg", Port: 5432}}
 
 	// Pick a free ephemeral port and occupy it so enterPortForm has to bump.
@@ -572,7 +572,7 @@ func TestExplorerEnterPortFormWithBumpedLocal(t *testing.T) {
 func TestExplorerViewRendersPortForm(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.SetSize(80, 24)
 	e.pod = "pg-0"
 	e.podPorts = []kube.ContainerPort{{Name: "pg", Port: 5432}}
@@ -592,7 +592,7 @@ func TestExplorerViewRendersPortForm(t *testing.T) {
 func TestExplorerLoadErrorShownInline(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.SetSize(80, 20)
 	e.step = stepNamespace
 	e.ctx = "ctx-a"
@@ -615,7 +615,7 @@ func TestExplorerLoadErrorShownInline(t *testing.T) {
 func TestExplorerLoadErrorClearedByBack(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.SetSize(80, 20)
 	e.step = stepNamespace
 	e.ctx = "ctx-a"
@@ -636,7 +636,7 @@ func TestExplorerLoadErrorClearedBySuccessfulRetry(t *testing.T) {
 		contexts:   []string{"ctx-a"},
 		namespaces: []string{"ns-a", "ns-b"},
 	}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.SetSize(80, 20)
 	e.step = stepNamespace
 	e.ctx = "ctx-a"
@@ -663,7 +663,7 @@ func TestExplorerLoadErrorClearedBySuccessfulRetry(t *testing.T) {
 func TestExplorerLoadErrorReplacesToast(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.step = stepNamespace
 	e.ctx = "ctx-a"
 
@@ -681,7 +681,7 @@ func TestExplorerLoadErrorReplacesToast(t *testing.T) {
 func TestExplorerEnterPortFormCustomEmpty(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
-	e := NewExplorer(mk, nil, s)
+	e := NewExplorer(mk, nil, s, nil)
 	e.podPorts = []kube.ContainerPort{{Name: "pg", Port: 5432}}
 
 	e.enterPortForm(0, 0)
@@ -697,5 +697,109 @@ func TestExplorerEnterPortFormCustomEmpty(t *testing.T) {
 	}
 	if e.formInfo != "" {
 		t.Errorf("formInfo = %q, want empty for custom", e.formInfo)
+	}
+}
+
+// fakeResume is a ResumeStore for tests that records writes.
+type fakeResume struct {
+	ctx       string
+	ns        string
+	saveCalls int
+	saveErr   error
+}
+
+func (f *fakeResume) LastContext() string        { return f.ctx }
+func (f *fakeResume) LastNamespace() string      { return f.ns }
+func (f *fakeResume) SetLastContext(ctx string)  { f.ctx = ctx }
+func (f *fakeResume) SetLastNamespace(ns string) { f.ns = ns }
+func (f *fakeResume) Save() error                { f.saveCalls++; return f.saveErr }
+
+func TestExplorerPersistsContextOnSelect(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"alpha", "beta"}}
+	r := &fakeResume{ns: "leftover-ns"} // pre-existing ns to confirm it gets cleared
+	e := NewExplorer(mk, nil, s, r)
+	e.SetSize(80, 24)
+	e.list.Select(0)
+
+	// Pressing Enter on stepContext calls kube.NewClient(val), which may
+	// fail in CI without a real kubeconfig — that's fine. Persist happens
+	// before the client switch, so the assertion is independent of the
+	// outcome of the connection attempt.
+	enter := tea.KeyMsg{Type: tea.KeyEnter}
+	e.Update(enter)
+
+	if r.ctx != "alpha" && r.ctx != "beta" {
+		t.Errorf("ResumeStore.SetLastContext was not called with a known ctx, got %q", r.ctx)
+	}
+	if r.ns != "" {
+		t.Errorf("ResumeStore.SetLastNamespace should clear when ctx changes, got %q", r.ns)
+	}
+}
+
+func TestExplorerAutoResumeContextOnly(t *testing.T) {
+	s := newTestStyles()
+	r := &fakeResume{ctx: "alpha"}
+	mk := &mockKubeClient{contexts: []string{"alpha", "beta"}, namespaces: []string{"x", "y"}}
+
+	// Construct in the lazy state (no kube yet), then deliver the client.
+	e := NewExplorer(nil, nil, s, r)
+	e.SetSize(80, 24)
+	_ = e.SetKubeClient(mk, nil)
+
+	if got := e.step; got != stepNamespace {
+		t.Errorf("step = %v, want stepNamespace after auto-resume with ctx only", got)
+	}
+	if got, _ := e.Selection(); got != "alpha" {
+		t.Errorf("Selection ctx = %q, want alpha", got)
+	}
+}
+
+func TestExplorerAutoResumeContextAndNamespace(t *testing.T) {
+	s := newTestStyles()
+	r := &fakeResume{ctx: "alpha", ns: "payments"}
+	mk := &mockKubeClient{contexts: []string{"alpha"}, pods: []kube.PodInfo{}}
+
+	e := NewExplorer(nil, nil, s, r)
+	e.SetSize(80, 24)
+	_ = e.SetKubeClient(mk, nil)
+
+	if got := e.step; got != stepPod {
+		t.Errorf("step = %v, want stepPod after auto-resume with ctx+ns", got)
+	}
+	ctx, ns := e.Selection()
+	if ctx != "alpha" || ns != "payments" {
+		t.Errorf("Selection = (%q,%q), want (alpha,payments)", ctx, ns)
+	}
+}
+
+func TestExplorerAutoResumeUnknownContextClears(t *testing.T) {
+	s := newTestStyles()
+	r := &fakeResume{ctx: "gone", ns: "obsolete"}
+	mk := &mockKubeClient{contexts: []string{"alpha"}}
+
+	e := NewExplorer(nil, nil, s, r)
+	e.SetSize(80, 24)
+	_ = e.SetKubeClient(mk, nil)
+
+	if r.ctx != "" || r.ns != "" {
+		t.Errorf("ResumeStore should be cleared, got ctx=%q ns=%q", r.ctx, r.ns)
+	}
+	if e.step != stepContext {
+		t.Errorf("step = %v, want stepContext when saved ctx is unknown", e.step)
+	}
+}
+
+func TestExplorerAutoResumeNoStateStaysOnContext(t *testing.T) {
+	s := newTestStyles()
+	r := &fakeResume{}
+	mk := &mockKubeClient{contexts: []string{"alpha"}}
+
+	e := NewExplorer(nil, nil, s, r)
+	e.SetSize(80, 24)
+	_ = e.SetKubeClient(mk, nil)
+
+	if e.step != stepContext {
+		t.Errorf("step = %v, want stepContext when no saved state", e.step)
 	}
 }
