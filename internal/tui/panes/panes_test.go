@@ -862,6 +862,87 @@ func TestExplorerBackClearsCtxFromNamespaceStep(t *testing.T) {
 	}
 }
 
+func TestExplorerJumpContextFromPodStep(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"alpha"}, namespaces: []string{"payments"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.step = stepPod
+	e.ctx = "alpha"
+	e.ns = "payments"
+	e.initView(80, 24)
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")}
+	next, _ := e.Update(msg)
+
+	if next.step != stepContext {
+		t.Errorf("step = %v after c, want stepContext", next.step)
+	}
+	ctx, ns := next.Selection()
+	if ctx != "" || ns != "" {
+		t.Errorf("Selection = (%q,%q) after jump to context, want empty/empty", ctx, ns)
+	}
+}
+
+func TestExplorerJumpNamespaceFromPodStep(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"alpha"}, namespaces: []string{"payments", "infra"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.step = stepPod
+	e.ctx = "alpha"
+	e.ns = "payments"
+	e.namespaces = []string{"payments", "infra"} // cached from previous load
+	e.initView(80, 24)
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	next, _ := e.Update(msg)
+
+	if next.step != stepNamespace {
+		t.Errorf("step = %v after n, want stepNamespace", next.step)
+	}
+	ctx, ns := next.Selection()
+	if ctx != "alpha" {
+		t.Errorf("ctx = %q after jump to namespace, want alpha (preserved)", ctx)
+	}
+	if ns != "" {
+		t.Errorf("ns = %q after jump to namespace, want empty", ns)
+	}
+}
+
+func TestExplorerJumpNamespaceWithoutContextIsNoop(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"alpha"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	// step == stepContext, ctx == "" (no selection yet)
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	next, _ := e.Update(msg)
+
+	if next.step != stepContext {
+		t.Errorf("step = %v after n with no ctx, want stepContext (unchanged)", next.step)
+	}
+}
+
+func TestExplorerJumpKeysSilentInFilterMode(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"alpha", "beta"}, namespaces: []string{"x"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.step = stepNamespace
+	e.ctx = "alpha"
+	e.namespaces = []string{"x"}
+	e.initView(80, 24)
+
+	// Enter filter mode, then type "c" — must not warp to stepContext.
+	e.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	next, _ := e.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	if next.step != stepNamespace {
+		t.Errorf("c during filter should not jump; step = %v, want stepNamespace", next.step)
+	}
+}
+
 func TestExplorerBackDoesNotTouchResumeStore(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"alpha"}, namespaces: []string{"payments"}}

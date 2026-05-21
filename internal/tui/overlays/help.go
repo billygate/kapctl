@@ -38,6 +38,13 @@ func helpSections() []helpSection {
 			},
 		},
 		{
+			title: "Explorer jumps",
+			bindings: [][2]string{
+				{k.JumpContext.Help().Key, "jump to context step"},
+				{k.JumpNamespace.Help().Key, "jump to namespace step"},
+			},
+		},
+		{
 			title: "Navigation in lists",
 			bindings: [][2]string{
 				{k.Select.Help().Key, "select"},

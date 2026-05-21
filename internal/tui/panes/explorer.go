@@ -215,6 +215,49 @@ func (e *Explorer) SetKubeClient(k core.KubeClient, err error) tea.Cmd {
 	return e.loadPods()
 }
 
+// tryJumpKeys handles the `c` / `n` shortcuts that warp the wizard
+// directly to the context or namespace step from anywhere except the
+// port-form (which owns text input). Returns handled=true to short-
+// circuit the caller's normal key routing. `n` is a no-op when no
+// context has been chosen yet.
+func (e *Explorer) tryJumpKeys(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
+	if e.step == stepPortForm {
+		return nil, false
+	}
+	switch {
+	case key.Matches(keyMsg, core.Keys.JumpContext):
+		if e.step == stepContext {
+			return nil, true
+		}
+		e.step = stepContext
+		e.ctx = ""
+		e.ns = ""
+		e.loadErr = nil
+		e.list.ResetFilter()
+		e.filter = ""
+		e.initView(e.width, e.height)
+		return nil, true
+	case key.Matches(keyMsg, core.Keys.JumpNamespace):
+		if e.ctx == "" || e.step == stepNamespace {
+			return nil, true
+		}
+		e.step = stepNamespace
+		e.ns = ""
+		e.loadErr = nil
+		e.list.ResetFilter()
+		e.filter = ""
+		e.initView(e.width, e.height)
+		// Namespaces were cached during the last forward load; if for
+		// some reason they're empty, kick a fresh load so the user gets
+		// a populated list rather than an empty pane.
+		if len(e.namespaces) == 0 {
+			return e.loadNamespaces(), true
+		}
+		return nil, true
+	}
+	return nil, false
+}
+
 // saveResume returns a tea.Cmd that calls Save() and emits a toast on
 // failure. Safe to call when e.resume == nil — returns nil in that case.
 // Captures e.resume into a local so a later assignment can't redirect
@@ -323,6 +366,10 @@ func (e *Explorer) updatePodTable(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
 		return e, cmd
 	}
 
+	if cmd, handled := e.tryJumpKeys(keyMsg); handled {
+		return e, cmd
+	}
+
 	switch {
 	case key.Matches(keyMsg, core.Keys.Retry):
 		if e.loadErr != nil {
@@ -375,6 +422,10 @@ func (e *Explorer) updateList(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		e.list, cmd = e.list.Update(keyMsg)
+		return e, cmd
+	}
+
+	if cmd, handled := e.tryJumpKeys(keyMsg); handled {
 		return e, cmd
 	}
 

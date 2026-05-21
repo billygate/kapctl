@@ -139,14 +139,16 @@ func DrainPortForwardEvents(mgr *portfwd.Manager) tea.Cmd {
 // KeyMap is the global keybinding table consumed by panes and the
 // help footer.
 type KeyMap struct {
-	Select  key.Binding
-	Filter  key.Binding
-	NextTab key.Binding
-	PrevTab key.Binding
-	Back    key.Binding
-	Retry   key.Binding
-	Help    key.Binding
-	Quit    key.Binding
+	Select        key.Binding
+	Filter        key.Binding
+	NextTab       key.Binding
+	PrevTab       key.Binding
+	Back          key.Binding
+	Retry         key.Binding
+	Help          key.Binding
+	Quit          key.Binding
+	JumpContext   key.Binding
+	JumpNamespace key.Binding
 }
 
 // ShortHelp implements the help.KeyMap interface.
@@ -196,6 +198,14 @@ var Keys = KeyMap{
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
+	),
+	JumpContext: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "jump to context step"),
+	),
+	JumpNamespace: key.NewBinding(
+		key.WithKeys("n"),
+		key.WithHelp("n", "jump to namespace step"),
 	),
 }
 
