@@ -27,19 +27,20 @@ import (
 // manager whose lifecycle is bound to the TUI. Per-pane state (lists,
 // filters, numeric jump, kube/docker handles) lives inside the panes.
 type AppModel struct {
-	tabs      []string
-	activeTab int
-	explorer  *panes.Explorer
-	local     *panes.Local
-	forwards  *panes.Forwards
-	pfManager *portfwd.Manager
-	width     int
-	height    int
-	quitting  bool
-	help      help.Model
-	styles    *styles.Styles
-	cfg       *config.Config
-	toasts    *overlays.Toasts
+	tabs        []string
+	activeTab   int
+	explorer    *panes.Explorer
+	local       *panes.Local
+	forwards    *panes.Forwards
+	pfManager   *portfwd.Manager
+	width       int
+	height      int
+	quitting    bool
+	footerHelp  help.Model
+	helpOverlay *overlays.Help
+	styles      *styles.Styles
+	cfg         *config.Config
+	toasts      *overlays.Toasts
 }
 
 // NewAppModel wires up the palette/styles and the two panes. Kube and
@@ -65,16 +66,17 @@ func NewAppModel(cfg *config.Config) (*AppModel, error) {
 	tabs = append(tabs, "FORWARDS")
 
 	return &AppModel{
-		tabs:      tabs,
-		activeTab: 0,
-		explorer:  panes.NewExplorer(nil, nil, s),
-		local:     panes.NewLocal(nil, s),
-		forwards:  panes.NewForwards(mgr, s),
-		pfManager: mgr,
-		help:      help.New(),
-		cfg:       cfg,
-		styles:    s,
-		toasts:    &overlays.Toasts{},
+		tabs:        tabs,
+		activeTab:   0,
+		explorer:    panes.NewExplorer(nil, nil, s, cfg),
+		local:       panes.NewLocal(nil, s),
+		forwards:    panes.NewForwards(mgr, s),
+		pfManager:   mgr,
+		footerHelp:  help.New(),
+		helpOverlay: &overlays.Help{},
+		cfg:         cfg,
+		styles:      s,
+		toasts:      &overlays.Toasts{},
 	}, nil
 }
 
@@ -100,13 +102,28 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		paneW, paneH := m.paneSize()
-		m.help.Width = paneW
+		m.footerHelp.Width = paneW
 		m.explorer.SetSize(paneW, paneH)
 		m.local.SetSize(paneW, paneH)
 		m.forwards.SetSize(paneW, paneH)
 		return m, nil
 
 	case tea.KeyMsg:
+		// While the help modal is open, intercept all keys. ?/esc/q
+		// close it; everything else is absorbed so the pane underneath
+		// doesn't react. ctrl+c still quits (handled separately because
+		// the modal-close branch above absorbs the literal "q" rune).
+		if m.helpOverlay.Visible {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.helpOverlay.Visible = false
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, core.Keys.Quit):
 			m.quitting = true
@@ -118,10 +135,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
 			return m, nil
 		case key.Matches(msg, core.Keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
+			m.helpOverlay.Visible = true
 			return m, nil
 		}
-		// Delegate to the active pane.
+
 		var cmd tea.Cmd
 		switch m.tabs[m.activeTab] {
 		case "EXPLORER":
@@ -228,7 +245,9 @@ func (m *AppModel) activeForwardCount() int {
 // minus the window border/padding minus the tab row + divider + footer.
 func (m *AppModel) paneSize() (int, int) {
 	h, v := m.styles.Window.GetFrameSize()
-	return m.width - h, m.height - v - 6
+	// 6 = tab row + divider + footer line + spacing (as before).
+	// 2 more = breadcrumb row + secondary divider.
+	return m.width - h, m.height - v - 8
 }
 
 // View renders the tab strip, the active pane, the help footer, and
@@ -262,7 +281,14 @@ func (m *AppModel) View() string {
 		BorderForeground(m.styles.Palette.Surface()).
 		Width(paneW).
 		Render("")
-	header := lipgloss.JoinVertical(lipgloss.Left, tabRow, divider)
+	ctx, ns := m.explorer.Selection()
+	breadcrumb := renderBreadcrumb(ctx, ns, m.styles)
+	divider2 := lipgloss.NewStyle().
+		Border(lipgloss.Border{Bottom: "─"}, false, false, true, false).
+		BorderForeground(m.styles.Palette.Surface()).
+		Width(paneW).
+		Render("")
+	header := lipgloss.JoinVertical(lipgloss.Left, tabRow, divider, breadcrumb, divider2)
 
 	var content string
 	switch m.tabs[m.activeTab] {
@@ -274,7 +300,7 @@ func (m *AppModel) View() string {
 		content = m.forwards.View(paneW, paneH)
 	}
 
-	helpView := m.styles.Footer.Render(m.help.View(core.Keys))
+	helpView := m.styles.Footer.Render(m.footerHelp.View(core.Keys))
 
 	toastBlock := m.toasts.View(paneW, m.styles)
 	sections := []string{header, content, helpView}
@@ -292,10 +318,36 @@ func (m *AppModel) View() string {
 		joined = strings.Join(lines[:innerH], "\n")
 	}
 
-	return m.styles.Window.
+	rendered := m.styles.Window.
 		Width(m.width - 2).
 		Height(m.height - 2).
 		Render(joined)
+
+	if m.helpOverlay.Visible {
+		// Help.View centers itself with lipgloss.Place across the full
+		// terminal dimensions, so return it standalone — keys are
+		// already absorbed in Update, so the underlying pane state
+		// stays untouched while the modal is open.
+		return m.helpOverlay.View(m.width, m.height, m.styles)
+	}
+	return rendered
+}
+
+// renderBreadcrumb formats the "ctx: X  •  ns: Y" line shown above the
+// active pane. Returns a muted placeholder when nothing has been
+// selected yet.
+func renderBreadcrumb(ctx, ns string, s *styles.Styles) string {
+	if ctx == "" && ns == "" {
+		return "  " + s.Muted.Render("(no context selected)")
+	}
+	var parts []string
+	if ctx != "" {
+		parts = append(parts, s.Muted.Render("ctx: ")+ctx)
+	}
+	if ns != "" {
+		parts = append(parts, s.Muted.Render("ns: ")+ns)
+	}
+	return "  " + strings.Join(parts, "  •  ")
 }
 
 // RunApp starts the Bubble Tea program for the given config and stops

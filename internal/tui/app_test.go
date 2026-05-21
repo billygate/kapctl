@@ -2,8 +2,10 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/help"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/billygate/kap-toolsbox/internal/config"
@@ -32,15 +34,17 @@ func newTestAppModel(t *testing.T) *AppModel {
 
 	mgr := portfwd.NewManager(0, 0)
 	return &AppModel{
-		tabs:      []string{"EXPLORER", "LOCAL", "FORWARDS"},
-		activeTab: 0,
-		explorer:  panes.NewExplorer(nil, kubeErr, s),
-		local:     panes.NewLocal(nil, s),
-		forwards:  panes.NewForwards(mgr, s),
-		pfManager: mgr,
-		styles:    s,
-		cfg:       cfg,
-		toasts:    &overlays.Toasts{},
+		tabs:        []string{"EXPLORER", "LOCAL", "FORWARDS"},
+		activeTab:   0,
+		explorer:    panes.NewExplorer(nil, kubeErr, s, cfg),
+		local:       panes.NewLocal(nil, s),
+		forwards:    panes.NewForwards(mgr, s),
+		pfManager:   mgr,
+		styles:      s,
+		cfg:         cfg,
+		footerHelp:  help.New(),
+		helpOverlay: &overlays.Help{},
+		toasts:      &overlays.Toasts{},
 	}
 }
 
@@ -142,8 +146,8 @@ func TestAppModelHelpToggle(t *testing.T) {
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")}
 	next, _ := m.Update(msg)
 	am := next.(*AppModel)
-	if !am.help.ShowAll {
-		t.Error("? key should toggle help.ShowAll to true")
+	if !am.helpOverlay.Visible {
+		t.Error("? key should open the help modal")
 	}
 }
 
@@ -163,5 +167,57 @@ func TestAppModelPaneSize(t *testing.T) {
 	}
 	if h <= 0 {
 		t.Errorf("paneSize height = %d, want > 0", h)
+	}
+}
+
+func TestAppModelHelpModalCloseKeys(t *testing.T) {
+	for _, k := range []string{"?", "esc", "q"} {
+		t.Run(k, func(t *testing.T) {
+			m := newTestAppModel(t)
+			m.helpOverlay.Visible = true
+
+			var msg tea.KeyMsg
+			if k == "esc" {
+				msg = tea.KeyMsg{Type: tea.KeyEsc}
+			} else {
+				msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+			}
+			next, _ := m.Update(msg)
+			am := next.(*AppModel)
+			if am.helpOverlay.Visible {
+				t.Errorf("%q should close the help modal", k)
+			}
+			if k == "q" && am.quitting {
+				t.Error("q while modal is open should NOT quit")
+			}
+		})
+	}
+}
+
+func TestAppModelHelpModalAbsorbsOtherKeys(t *testing.T) {
+	m := newTestAppModel(t)
+	m.helpOverlay.Visible = true
+	before := m.activeTab
+
+	// "]" would normally advance the tab.
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")}
+	next, _ := m.Update(msg)
+	am := next.(*AppModel)
+
+	if am.activeTab != before {
+		t.Errorf("tab should not change while modal is open: was %d, now %d", before, am.activeTab)
+	}
+	if !am.helpOverlay.Visible {
+		t.Error("modal should stay open when an absorbed key is pressed")
+	}
+}
+
+func TestAppModelViewShowsBreadcrumbPlaceholder(t *testing.T) {
+	m := newTestAppModel(t)
+	m.width = 100
+	m.height = 30
+	v := m.View()
+	if !strings.Contains(v, "(no context selected)") {
+		t.Errorf("View should render placeholder breadcrumb, got:\n%s", v)
 	}
 }
