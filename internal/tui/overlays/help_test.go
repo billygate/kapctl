@@ -23,7 +23,19 @@ func TestHelpViewContainsSectionsAndBindings(t *testing.T) {
 	h := &overlays.Help{Visible: true}
 	v := h.View(120, 40, s)
 
-	for _, want := range []string{"Help", "Global", "enter", "esc", "?"} {
+	for _, want := range []string{
+		// Modal title
+		"Help",
+		// Section titles
+		"Global",
+		"Navigation in lists",
+		"Tables (Pod step)",
+		"Port-forwards tab",
+		// Sample bindings from each section
+		"?", "enter", "esc", "1–9",
+		// Sample descriptions
+		"select", "filter", "stop forward",
+	} {
 		if !strings.Contains(v, want) {
 			t.Errorf("Help.View missing %q in:\n%s", want, v)
 		}

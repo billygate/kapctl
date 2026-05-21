@@ -95,8 +95,9 @@ func (h *Help) View(w, h2 int, s *styles.Styles) string {
 }
 
 func padRight(s string, n int) string {
-	if len(s) >= n {
+	w := lipgloss.Width(s)
+	if w >= n {
 		return s + " "
 	}
-	return s + strings.Repeat(" ", n-len(s))
+	return s + strings.Repeat(" ", n-w)
 }
