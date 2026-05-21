@@ -31,7 +31,8 @@ func helpSections() []helpSection {
 			title: "Global",
 			bindings: [][2]string{
 				{"?", "help (close)"},
-				{"q / ctrl+c", "quit"},
+				{"q", "close modal (quits outside modal)"},
+				{"ctrl+c", "quit (always)"},
 				{k.NextTab.Help().Key + " / " + k.PrevTab.Help().Key, "next / prev tab"},
 				{k.Retry.Help().Key, "retry load (when error shown)"},
 			},

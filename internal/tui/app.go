@@ -257,6 +257,13 @@ func (m *AppModel) View() string {
 		return ""
 	}
 
+	// When the help modal is open, skip rendering the pane underneath —
+	// it would be discarded below anyway. Pane state is preserved in the
+	// model; keys are absorbed in Update.
+	if m.helpOverlay.Visible {
+		return m.helpOverlay.View(m.width, m.height, m.styles)
+	}
+
 	// Tab row. The FORWARDS label carries a live badge of the number
 	// of running/starting forwards so the user has a persistent
 	// indicator regardless of which tab is focused.
@@ -318,19 +325,10 @@ func (m *AppModel) View() string {
 		joined = strings.Join(lines[:innerH], "\n")
 	}
 
-	rendered := m.styles.Window.
+	return m.styles.Window.
 		Width(m.width - 2).
 		Height(m.height - 2).
 		Render(joined)
-
-	if m.helpOverlay.Visible {
-		// Help.View centers itself with lipgloss.Place across the full
-		// terminal dimensions, so return it standalone — keys are
-		// already absorbed in Update, so the underlying pane state
-		// stays untouched while the modal is open.
-		return m.helpOverlay.View(m.width, m.height, m.styles)
-	}
-	return rendered
 }
 
 // renderBreadcrumb formats the "ctx: X  •  ns: Y" line shown above the
