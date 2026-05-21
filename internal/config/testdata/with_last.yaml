@@ -1,0 +1,5 @@
+theme: nord
+ports:
+  ctx-a.ns-x: 5432
+last_context: prod-eu
+last_namespace: payments

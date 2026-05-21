@@ -13,8 +13,10 @@ import (
 // Config is the persistent settings file loaded from
 // $HOME/.config/kapctl/config.yaml.
 type Config struct {
-	Theme string         `yaml:"theme"`
-	Ports map[string]int `yaml:"ports"` // key: "<context>.<namespace>"
+	Theme            string         `yaml:"theme"`
+	Ports            map[string]int `yaml:"ports"` // key: "<context>.<namespace>"
+	LastContextRaw   string         `yaml:"last_context,omitempty"`
+	LastNamespaceRaw string         `yaml:"last_namespace,omitempty"`
 }
 
 // validThemes is checked against the registered theme names. If the
@@ -106,3 +108,15 @@ func (c *Config) Save() error {
 	}
 	return os.WriteFile(filepath.Join(dir, "config.yaml"), data, 0o644)
 }
+
+// LastContext returns the most recently selected kube context, or "".
+func (c *Config) LastContext() string { return c.LastContextRaw }
+
+// LastNamespace returns the most recently selected namespace, or "".
+func (c *Config) LastNamespace() string { return c.LastNamespaceRaw }
+
+// SetLastContext stores the given context as the last-used selection.
+func (c *Config) SetLastContext(ctx string) { c.LastContextRaw = ctx }
+
+// SetLastNamespace stores the given namespace as the last-used selection.
+func (c *Config) SetLastNamespace(ns string) { c.LastNamespaceRaw = ns }

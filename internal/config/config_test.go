@@ -72,6 +72,29 @@ func TestLoadFileMissingFile(t *testing.T) {
 	}
 }
 
+func TestLastSelectionRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	cfg := &config.Config{Theme: "catppuccin", Ports: map[string]int{}}
+	cfg.SetLastContext("prod-eu")
+	cfg.SetLastNamespace("payments")
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, _, err := config.LoadFile(filepath.Join(dir, ".config", "kapctl", "config.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if got := loaded.LastContext(); got != "prod-eu" {
+		t.Errorf("LastContext = %q, want prod-eu", got)
+	}
+	if got := loaded.LastNamespace(); got != "payments" {
+		t.Errorf("LastNamespace = %q, want payments", got)
+	}
+}
+
 func TestSaveAndReload(t *testing.T) {
 	dir := t.TempDir()
 	// Override HOME so Save() writes to our temp dir
@@ -99,5 +122,31 @@ func TestSaveAndReload(t *testing.T) {
 	}
 	if loaded.GetPort("ctx", "ns") != 5432 {
 		t.Errorf("GetPort after reload = %d, want 5432", loaded.GetPort("ctx", "ns"))
+	}
+}
+
+func TestLoadFileReadsLastSelection(t *testing.T) {
+	cfg, _, err := config.LoadFile(filepath.Join("testdata", "with_last.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if got := cfg.LastContext(); got != "prod-eu" {
+		t.Errorf("LastContext = %q, want prod-eu", got)
+	}
+	if got := cfg.LastNamespace(); got != "payments" {
+		t.Errorf("LastNamespace = %q, want payments", got)
+	}
+}
+
+func TestLoadFileMinimalHasEmptyLastSelection(t *testing.T) {
+	cfg, _, err := config.LoadFile(filepath.Join("testdata", "minimal.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if got := cfg.LastContext(); got != "" {
+		t.Errorf("LastContext = %q, want empty", got)
+	}
+	if got := cfg.LastNamespace(); got != "" {
+		t.Errorf("LastNamespace = %q, want empty", got)
 	}
 }
