@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/billygate/kap-toolsbox/internal/config"
+	"github.com/billygate/kap-toolsbox/internal/kube"
 	"github.com/billygate/kap-toolsbox/internal/portfwd"
 	"github.com/billygate/kap-toolsbox/internal/spacebox"
 	"github.com/billygate/kap-toolsbox/internal/tui/core"
@@ -55,6 +56,9 @@ func NewAppModel(cfg *config.Config) (*AppModel, error) {
 	s := styles.New(palette)
 
 	mgr := portfwd.NewManager(0, 0)
+	mgr.SetProberFactory(func(contextName string) (portfwd.Prober, error) {
+		return kube.NewClient(contextName)
+	})
 
 	// LOCAL tab is gated on the spacebox CLI being on PATH. Without it
 	// the cluster-lifecycle actions in the pane have no backend, so we
