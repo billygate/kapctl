@@ -4,17 +4,13 @@
 package portfwd
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -262,17 +258,10 @@ func (m *Manager) Start(opts StartOpts) (string, error) {
 		cancel:    cancel,
 		doneCh:    make(chan struct{}),
 	}
-	e.cmd = m.builder(opts)
 	m.entries[id] = e
 	m.mu.Unlock()
 
-	if err := m.startProcess(ctx, e); err != nil {
-		m.mu.Lock()
-		delete(m.entries, id)
-		m.mu.Unlock()
-		cancel()
-		return "", err
-	}
+	go m.supervise(ctx, e)
 	return id, nil
 }
 
@@ -282,84 +271,6 @@ func (e *entry) statusRead() Status {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.status
-}
-
-func (m *Manager) startProcess(ctx context.Context, e *entry) error {
-	stderr, err := e.cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-	stdout, err := e.cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := e.cmd.Start(); err != nil {
-		return err
-	}
-
-	// Cancellation: when ctx is cancelled (Stop or StopAll), send
-	// SIGTERM; if the child hasn't exited within 2s, escalate to SIGKILL.
-	go func() {
-		<-ctx.Done()
-		if p := e.cmd.Process; p != nil {
-			_ = p.Signal(syscall.SIGTERM)
-			select {
-			case <-e.doneCh:
-			case <-time.After(2 * time.Second):
-				_ = p.Kill()
-			}
-		}
-	}()
-
-	go m.readLogs(e, stderr, true)
-	go m.readLogs(e, stdout, false)
-	go m.waitDone(e)
-	return nil
-}
-
-// readLogs scans a pipe line-by-line into the entry's ring buffer.
-// On stderr we look for kubectl's "Forwarding from" line and flip the
-// status from Starting → Running on first sight.
-func (m *Manager) readLogs(e *entry, r io.Reader, watchForReady bool) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	for scanner.Scan() {
-		line := scanner.Text()
-		e.logs.Push(line)
-		if watchForReady && strings.Contains(line, "Forwarding from") {
-			e.mu.Lock()
-			if e.status == StatusStarting {
-				e.status = StatusRunning
-				e.mu.Unlock()
-				m.emit(Event{ID: e.id, Status: StatusRunning, Detail: line})
-				continue
-			}
-			e.mu.Unlock()
-		}
-	}
-}
-
-// waitDone blocks on cmd.Wait() and emits the terminal status.
-func (m *Manager) waitDone(e *entry) {
-	err := e.cmd.Wait()
-	e.mu.Lock()
-	final := StatusStopped
-	detail := ""
-	if err != nil && !errors.Is(err, context.Canceled) {
-		// cmd.Wait returns a non-nil err on a non-zero exit, including
-		// signal-induced termination. Distinguish "we asked for it" via
-		// the existing status — if Stop set status to Stopped already,
-		// keep that; otherwise treat as Errored.
-		if e.status != StatusStopped {
-			final = StatusErrored
-			detail = err.Error()
-			e.lastErr = detail
-		}
-	}
-	e.status = final
-	close(e.doneCh)
-	e.mu.Unlock()
-	m.emit(Event{ID: e.id, Status: final, Detail: detail})
 }
 
 // emit best-effort writes to the events channel; if no consumer is
