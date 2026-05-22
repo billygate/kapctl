@@ -4,6 +4,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,6 +83,9 @@ func TestManagerStartRunningStop(t *testing.T) {
 func TestManagerErrorPath(t *testing.T) {
 	m := NewManager(8, 64)
 	m.SetCmdBuilder(failingCmd)
+	clk := newFakeClock(time.Now())
+	m.SetClock(clk)
+
 	id, err := m.Start(StartOpts{
 		Context: "ctx", Namespace: "ns", Target: "x",
 		Kind: KindPod, LocalPort: 1234, RemotePort: 1234,
@@ -89,10 +93,30 @@ func TestManagerErrorPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	waitFor(t, m.Events(), StatusErrored, 3*time.Second)
-	list := m.List()
-	if len(list) != 1 || list[0].ID != id || list[0].Status != StatusErrored {
-		t.Errorf("List() = %+v, want one StatusErrored entry", list)
+
+	// Each iteration emits Reconnecting; advance clock so we drain
+	// multiple iterations until budget is exhausted (120s).
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-m.Events():
+			if ev.Status == StatusErrored {
+				if !strings.Contains(ev.Detail, "budget") {
+					t.Errorf("expected budget-exhausted detail, got %q", ev.Detail)
+				}
+				list := m.List()
+				if len(list) != 1 || list[0].ID != id || list[0].Status != StatusErrored {
+					t.Errorf("List() = %+v, want one StatusErrored entry", list)
+				}
+				return
+			}
+			if ev.Status == StatusReconnecting {
+				// Push clock past the next backoff window.
+				clk.Advance(20 * time.Second)
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for StatusErrored")
+		}
 	}
 }
 
