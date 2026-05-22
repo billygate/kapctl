@@ -129,6 +129,9 @@ type Manager struct {
 	builder  CmdBuilder
 	logCap   int // ring buffer size per entry
 	stopping bool
+
+	proberFactory ProberFactory // nil → no pod re-resolution; KindPod uses original Target each attempt
+	clock         Clock         // nil → realClock
 }
 
 // NewManager builds a Manager. eventsCap sizes the events channel
@@ -145,6 +148,7 @@ func NewManager(eventsCap, logCap int) *Manager {
 		events:  make(chan Event, eventsCap),
 		builder: DefaultCmdBuilder,
 		logCap:  logCap,
+		clock:   realClock{},
 	}
 }
 
@@ -153,6 +157,26 @@ func (m *Manager) SetCmdBuilder(b CmdBuilder) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.builder = b
+}
+
+// SetProberFactory installs the factory used to build Probers for new
+// entries. When nil (the default), KindPod entries do not re-resolve
+// the target — they keep retrying the original pod name.
+func (m *Manager) SetProberFactory(f ProberFactory) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.proberFactory = f
+}
+
+// SetClock overrides the time source. Used by tests. Passing nil
+// restores the default realClock.
+func (m *Manager) SetClock(c Clock) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c == nil {
+		c = realClock{}
+	}
+	m.clock = c
 }
 
 // Events returns the channel of status transitions. Closed by Close().
