@@ -4,15 +4,19 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"strings"
 	"syscall"
 	"time"
 )
 
 const (
-	reconnectBudget = 120 * time.Second
-	livenessTick    = 5 * time.Second
+	reconnectBudget    = 120 * time.Second
+	livenessTick       = 5 * time.Second
+	tcpProbeTimeout    = 500 * time.Millisecond
+	tcpProbeFailThresh = 3
 )
 
 var backoffSchedule = []time.Duration{
@@ -80,6 +84,10 @@ func (m *Manager) supervise(ctx context.Context, e *entry) {
 // On a successful "Forwarding from", clears reconnect bookkeeping
 // before settling into the wait-for-exit phase.
 func (m *Manager) runOneAttempt(ctx context.Context, e *entry, target string) (reason string, exitedClean bool) {
+	e.mu.Lock()
+	e.tcpFailStreak = 0
+	e.mu.Unlock()
+
 	opts := e.opts
 	opts.Target = target
 	e.cmd = m.builder(opts)
@@ -129,6 +137,7 @@ func (m *Manager) runOneAttempt(ctx context.Context, e *entry, target string) (r
 			e.mu.Lock()
 			e.attempts = 0
 			e.reconnectStartedAt = time.Time{}
+			e.tcpFailStreak = 0
 			e.mu.Unlock()
 			// Don't clear lastReconnectReason here — toast policy in Task 14
 			// reads it to emit a "reconnected" success toast.
@@ -243,24 +252,38 @@ func (m *Manager) probeOnce(ctx context.Context, e *entry) string {
 		return ""
 	}
 
-	prober, _ := m.getProberForEntry(e)
-	if prober == nil {
-		return ""
+	if prober, _ := m.getProberForEntry(e); prober != nil {
+		pod, err := prober.GetPod(ctx, ns, target)
+		if errors.Is(err, ErrPodNotFound) {
+			return "pod gone"
+		}
+		if err == nil {
+			if pod.Phase != "Running" {
+				return "pod phase " + pod.Phase
+			}
+			if expectedUID != "" && pod.UID != expectedUID {
+				return "pod recreated (UID changed)"
+			}
+		}
+		// Transient API error — fall through to TCP probe.
 	}
 
-	pod, err := prober.GetPod(ctx, ns, target)
-	if errors.Is(err, ErrPodNotFound) {
-		return "pod gone"
-	}
-	if err != nil {
-		// Transient API error — ignore. Will retry on next tick.
-		return ""
-	}
-	if pod.Phase != "Running" {
-		return "pod phase " + pod.Phase
-	}
-	if expectedUID != "" && pod.UID != expectedUID {
-		return "pod recreated (UID changed)"
+	// TCP probe localhost:LocalPort with 3-failure debounce.
+	addr := fmt.Sprintf("127.0.0.1:%d", e.opts.LocalPort)
+	conn, derr := net.DialTimeout("tcp", addr, tcpProbeTimeout)
+	if derr != nil {
+		e.mu.Lock()
+		e.tcpFailStreak++
+		streak := e.tcpFailStreak
+		e.mu.Unlock()
+		if streak >= tcpProbeFailThresh {
+			return fmt.Sprintf("tcp probe failed %d times", streak)
+		}
+	} else {
+		_ = conn.Close()
+		e.mu.Lock()
+		e.tcpFailStreak = 0
+		e.mu.Unlock()
 	}
 	return ""
 }

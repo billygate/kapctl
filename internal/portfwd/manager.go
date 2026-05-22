@@ -195,8 +195,9 @@ type entry struct {
 
 	// Resolved pod identity (for KindPod). Recorded on first successful
 	// resolution; used to re-find the pod by labels and detect UID-change.
-	podUID    string
-	podLabels map[string]string
+	podUID        string
+	podLabels     map[string]string
+	tcpFailStreak int
 
 	cmd    *exec.Cmd
 	cancel context.CancelFunc

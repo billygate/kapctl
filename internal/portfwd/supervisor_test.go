@@ -1,7 +1,9 @@
 package portfwd
 
 import (
+	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -161,4 +163,92 @@ func TestSupervisorReResolvesPodByLabels(t *testing.T) {
 	if calls[1] != "pg-1" {
 		t.Errorf("second call target = %q, want pg-1 (re-resolved)", calls[1])
 	}
+}
+
+func TestSupervisorTCPProbeReconnectsAfterThreeFailures(t *testing.T) {
+	m := NewManager(16, 64)
+
+	// Builder: prints "Forwarding from" but binds nothing — every TCP
+	// probe to LocalPort fails. We must pick a port where no service
+	// listens. Port 1 is privileged on macOS/Linux — almost certainly
+	// nothing answers there.
+	port := 1
+	builder := func(_ StartOpts) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c",
+			`printf 'Forwarding from 127.0.0.1:`+strconv.Itoa(port)+` -> 5432\n' >&2; sleep 30`)
+	}
+	m.SetCmdBuilder(builder)
+
+	clk := newFakeClock(time.Now())
+	m.SetClock(clk)
+
+	// No prober factory → GetPod check is skipped; only the TCP probe fires.
+	id, err := m.Start(StartOpts{
+		Context: "ctx", Namespace: "ns", Target: "pg-0",
+		Kind: KindPod, LocalPort: port, RemotePort: 5432,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+
+	// Three liveness ticks → three TCP failures → reconnect.
+	for i := 0; i < 3; i++ {
+		clk.Advance(6 * time.Second)
+		// Give the supervisor a moment to process the tick.
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	ev := waitFor(t, m.Events(), StatusReconnecting, 3*time.Second)
+	if !strings.Contains(strings.ToLower(ev.Detail), "tcp") {
+		t.Errorf("reconnect reason = %q, want it to mention tcp", ev.Detail)
+	}
+
+	_ = m.Stop(id)
+}
+
+func TestSupervisorTCPProbeDebouncesSingleFailure(t *testing.T) {
+	m := NewManager(16, 64)
+
+	// Use a port we can listen on briefly, then close — single failure.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := lis.Addr().(*net.TCPAddr).Port
+
+	builder := func(_ StartOpts) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c",
+			`printf 'Forwarding from 127.0.0.1:`+strconv.Itoa(port)+` -> 5432\n' >&2; sleep 30`)
+	}
+	m.SetCmdBuilder(builder)
+
+	clk := newFakeClock(time.Now())
+	m.SetClock(clk)
+
+	id, err := m.Start(StartOpts{
+		Context: "ctx", Namespace: "ns", Target: "pg-0",
+		Kind: KindPod, LocalPort: port, RemotePort: 5432,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+
+	// Close the listener to fail the next probe.
+	_ = lis.Close()
+
+	// One tick → one TCP failure. Should NOT trigger reconnect.
+	clk.Advance(6 * time.Second)
+
+	select {
+	case ev := <-m.Events():
+		if ev.Status == StatusReconnecting {
+			t.Fatalf("got reconnect after a single TCP failure, want debounce; detail=%q", ev.Detail)
+		}
+	case <-time.After(500 * time.Millisecond):
+		// Good — no reconnect within 500ms.
+	}
+
+	_ = m.Stop(id)
 }
