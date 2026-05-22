@@ -25,6 +25,7 @@ type Status int
 const (
 	StatusStarting Status = iota
 	StatusRunning
+	StatusReconnecting
 	StatusErrored
 	StatusStopped
 )
@@ -36,6 +37,8 @@ func (s Status) String() string {
 		return "starting"
 	case StatusRunning:
 		return "running"
+	case StatusReconnecting:
+		return "reconnecting"
 	case StatusErrored:
 		return "errored"
 	case StatusStopped:
@@ -84,6 +87,10 @@ type Snapshot struct {
 	Status     Status
 	StartedAt  time.Time
 	LastError  string
+
+	Attempts            int       // reconnect attempts in current series; 0 when Running
+	LastReconnectReason string    // populated while Reconnecting or after Errored-from-reconnect
+	ReconnectStartedAt  time.Time // zero when not reconnecting
 }
 
 // Event is published on the Manager.Events() channel whenever an
@@ -161,6 +168,16 @@ type entry struct {
 	lastErr   string
 	logs      *ringBuf
 
+	// Reconnect state
+	attempts            int
+	lastReconnectReason string
+	reconnectStartedAt  time.Time
+
+	// Resolved pod identity (for KindPod). Recorded on first successful
+	// resolution; used to re-find the pod by labels and detect UID-change.
+	podUID    string
+	podLabels map[string]string
+
 	cmd    *exec.Cmd
 	cancel context.CancelFunc
 	doneCh chan struct{}
@@ -170,16 +187,19 @@ func (e *entry) snapshot() Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return Snapshot{
-		ID:         e.id,
-		Context:    e.opts.Context,
-		Namespace:  e.opts.Namespace,
-		Target:     e.opts.Target,
-		Kind:       e.opts.Kind,
-		LocalPort:  e.opts.LocalPort,
-		RemotePort: e.opts.RemotePort,
-		Status:     e.status,
-		StartedAt:  e.startedAt,
-		LastError:  e.lastErr,
+		ID:                  e.id,
+		Context:             e.opts.Context,
+		Namespace:           e.opts.Namespace,
+		Target:              e.opts.Target,
+		Kind:                e.opts.Kind,
+		LocalPort:           e.opts.LocalPort,
+		RemotePort:          e.opts.RemotePort,
+		Status:              e.status,
+		StartedAt:           e.startedAt,
+		LastError:           e.lastErr,
+		Attempts:            e.attempts,
+		LastReconnectReason: e.lastReconnectReason,
+		ReconnectStartedAt:  e.reconnectStartedAt,
 	}
 }
 
