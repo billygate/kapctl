@@ -252,3 +252,32 @@ func TestSupervisorTCPProbeDebouncesSingleFailure(t *testing.T) {
 
 	_ = m.Stop(id)
 }
+
+func TestSupervisorStopDuringBackoffExits(t *testing.T) {
+	m := NewManager(16, 64)
+	m.SetCmdBuilder(failingCmd) // always exits non-zero
+
+	clk := newFakeClock(time.Now())
+	m.SetClock(clk)
+
+	id, err := m.Start(StartOpts{
+		Context: "ctx", Namespace: "ns", Target: "x",
+		Kind: KindPod, LocalPort: 1234, RemotePort: 1234,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitFor(t, m.Events(), StatusReconnecting, 3*time.Second)
+
+	// Do NOT advance the clock. We're inside the backoff select; the
+	// supervisor is blocked on clock.After(1s).
+	if err := m.Stop(id); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	waitFor(t, m.Events(), StatusStopped, 3*time.Second)
+
+	list := m.List()
+	if len(list) != 1 || list[0].Status != StatusStopped {
+		t.Errorf("after Stop during backoff: list=%+v, want Stopped", list)
+	}
+}
