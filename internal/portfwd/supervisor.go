@@ -167,18 +167,6 @@ func (m *Manager) recordFailure(ctx context.Context, e *entry, reason string) (s
 	}
 }
 
-// terminalError is kept for the rare case where a totally broken pipe/start
-// path needs to settle into Errored without going through the reconnect loop.
-// Currently unused after the loop refactor; left in for safety until probe
-// tasks (8-10) add code paths that may need it.
-func (m *Manager) terminalError(e *entry, err error) {
-	e.mu.Lock()
-	e.status = StatusErrored
-	e.lastErr = err.Error()
-	e.mu.Unlock()
-	m.emit(Event{ID: e.id, Status: StatusErrored, Detail: err.Error()})
-}
-
 // readLogs scans a pipe line-by-line into the entry's ring buffer.
 // On stderr we look for kubectl's "Forwarding from" line and flip the
 // status from Starting → Running on first sight, also signalling on
