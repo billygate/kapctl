@@ -3,8 +3,8 @@ package styles_test
 import (
 	"testing"
 
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
-	"github.com/billygate/kap-toolsbox/internal/tui/themes"
+	"github.com/billygate/kapctl/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/tui/themes"
 )
 
 func TestNewReturnsNonNilStyles(t *testing.T) {

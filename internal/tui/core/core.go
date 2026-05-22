@@ -19,10 +19,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/billygate/kap-toolsbox/internal/docker"
-	"github.com/billygate/kap-toolsbox/internal/kube"
-	"github.com/billygate/kap-toolsbox/internal/portfwd"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/docker"
+	"github.com/billygate/kapctl/internal/kube"
+	"github.com/billygate/kapctl/internal/portfwd"
+	"github.com/billygate/kapctl/internal/tui/styles"
 )
 
 // ── Client interfaces ───────────────────────────────────────────────────

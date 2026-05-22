@@ -12,15 +12,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/billygate/kap-toolsbox/internal/config"
-	"github.com/billygate/kap-toolsbox/internal/kube"
-	"github.com/billygate/kap-toolsbox/internal/portfwd"
-	"github.com/billygate/kap-toolsbox/internal/spacebox"
-	"github.com/billygate/kap-toolsbox/internal/tui/core"
-	"github.com/billygate/kap-toolsbox/internal/tui/overlays"
-	"github.com/billygate/kap-toolsbox/internal/tui/panes"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
-	"github.com/billygate/kap-toolsbox/internal/tui/themes"
+	"github.com/billygate/kapctl/internal/config"
+	"github.com/billygate/kapctl/internal/kube"
+	"github.com/billygate/kapctl/internal/portfwd"
+	"github.com/billygate/kapctl/internal/spacebox"
+	"github.com/billygate/kapctl/internal/tui/core"
+	"github.com/billygate/kapctl/internal/tui/overlays"
+	"github.com/billygate/kapctl/internal/tui/panes"
+	"github.com/billygate/kapctl/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/tui/themes"
 )
 
 // AppModel holds top-level state: which tab is active, the panes,

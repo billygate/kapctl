@@ -41,14 +41,14 @@ brew install kapctl
 Requires Go 1.26 or newer.
 
 ```sh
-go install github.com/billygate/kap-toolsbox/cmd/kapctl@latest
+go install github.com/billygate/kapctl/cmd/kapctl@latest
 ```
 
 Or build from a checkout:
 
 ```sh
-git clone https://github.com/billygate/kap-toolsbox
-cd kap-toolsbox
+git clone https://github.com/billygate/kapctl
+cd kapctl
 make build      # produces ./bin/kapctl
 ```
 

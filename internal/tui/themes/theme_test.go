@@ -3,7 +3,7 @@ package themes_test
 import (
 	"testing"
 
-	"github.com/billygate/kap-toolsbox/internal/tui/themes"
+	"github.com/billygate/kapctl/internal/tui/themes"
 	"github.com/charmbracelet/lipgloss"
 )
 

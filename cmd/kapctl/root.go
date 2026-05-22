@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/billygate/kap-toolsbox/internal/config"
-	"github.com/billygate/kap-toolsbox/internal/tui"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
-	"github.com/billygate/kap-toolsbox/internal/tui/themes"
+	"github.com/billygate/kapctl/internal/config"
+	"github.com/billygate/kapctl/internal/tui"
+	"github.com/billygate/kapctl/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/tui/themes"
 	"github.com/spf13/cobra"
 )
 

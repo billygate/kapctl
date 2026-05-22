@@ -3,7 +3,7 @@
 package styles
 
 import (
-	"github.com/billygate/kap-toolsbox/internal/tui/themes"
+	"github.com/billygate/kapctl/internal/tui/themes"
 	"github.com/charmbracelet/lipgloss"
 )
 

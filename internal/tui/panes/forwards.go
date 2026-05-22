@@ -9,10 +9,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/billygate/kap-toolsbox/internal/portfwd"
-	"github.com/billygate/kap-toolsbox/internal/tui/core"
-	"github.com/billygate/kap-toolsbox/internal/tui/overlays"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/portfwd"
+	"github.com/billygate/kapctl/internal/tui/core"
+	"github.com/billygate/kapctl/internal/tui/overlays"
+	"github.com/billygate/kapctl/internal/tui/styles"
 )
 
 // fwdRow is the RowProvider adapter for portfwd.Snapshot. The captured

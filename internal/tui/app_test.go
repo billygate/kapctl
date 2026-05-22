@@ -8,14 +8,14 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/billygate/kap-toolsbox/internal/config"
-	"github.com/billygate/kap-toolsbox/internal/docker"
-	"github.com/billygate/kap-toolsbox/internal/portfwd"
-	"github.com/billygate/kap-toolsbox/internal/tui/core"
-	"github.com/billygate/kap-toolsbox/internal/tui/overlays"
-	"github.com/billygate/kap-toolsbox/internal/tui/panes"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
-	"github.com/billygate/kap-toolsbox/internal/tui/themes"
+	"github.com/billygate/kapctl/internal/config"
+	"github.com/billygate/kapctl/internal/docker"
+	"github.com/billygate/kapctl/internal/portfwd"
+	"github.com/billygate/kapctl/internal/tui/core"
+	"github.com/billygate/kapctl/internal/tui/overlays"
+	"github.com/billygate/kapctl/internal/tui/panes"
+	"github.com/billygate/kapctl/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/tui/themes"
 )
 
 // newTestAppModel builds an AppModel with no real kube/docker (nil clients are

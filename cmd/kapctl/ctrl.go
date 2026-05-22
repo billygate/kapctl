@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/billygate/kap-toolsbox/internal/kube"
-	"github.com/billygate/kap-toolsbox/internal/tui/overlays"
+	"github.com/billygate/kapctl/internal/kube"
+	"github.com/billygate/kapctl/internal/tui/overlays"
 	"github.com/spf13/cobra"
 )
 

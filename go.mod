@@ -1,4 +1,4 @@
-module github.com/billygate/kap-toolsbox
+module github.com/billygate/kapctl
 
 go 1.26.2
 

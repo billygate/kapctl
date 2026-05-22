@@ -3,7 +3,7 @@ package overlays
 import (
 	"testing"
 
-	"github.com/billygate/kap-toolsbox/internal/kube"
+	"github.com/billygate/kapctl/internal/kube"
 )
 
 func TestParsePort(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/billygate/kap-toolsbox/internal/tui/core"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/tui/core"
+	"github.com/billygate/kapctl/internal/tui/styles"
 )
 
 // pickerModel is a single-shot list picker driving the public Pick().

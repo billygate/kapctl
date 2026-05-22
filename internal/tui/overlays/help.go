@@ -5,8 +5,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/billygate/kap-toolsbox/internal/tui/core"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/tui/core"
+	"github.com/billygate/kapctl/internal/tui/styles"
 )
 
 // Help is the modal opened with `?`. View returns the rendered modal

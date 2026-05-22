@@ -14,7 +14,7 @@ make tidy
 go test ./internal/tui/panes -run TestExplorerStepFlow -v   # run a single test
 ```
 
-Go 1.26.2. Module path is `github.com/billygate/kap-toolsbox`. Build artifacts go to `bin/` (gitignored). The `.go/` directory is a project-local `GOPATH`/build cache — do not commit changes inside it.
+Go 1.26.2. Module path is `github.com/billygate/kapctl`. Build artifacts go to `bin/` (gitignored). The `.go/` directory is a project-local `GOPATH`/build cache — do not commit changes inside it.
 
 ## What this repo is
 

@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/billygate/kap-toolsbox/internal/kube"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/kube"
+	"github.com/billygate/kapctl/internal/tui/styles"
 )
 
 const customPortLabel = "custom (edit ports)"

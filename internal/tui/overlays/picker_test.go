@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/billygate/kap-toolsbox/internal/tui/core"
+	"github.com/billygate/kapctl/internal/tui/core"
 )
 
 func newPickerModel(items []string) pickerModel {

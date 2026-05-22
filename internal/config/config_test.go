@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/billygate/kap-toolsbox/internal/config"
+	"github.com/billygate/kapctl/internal/config"
 )
 
 func TestLoad(t *testing.T) {

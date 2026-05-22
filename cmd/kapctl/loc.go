@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/billygate/kap-toolsbox/internal/docker"
-	"github.com/billygate/kap-toolsbox/internal/spacebox"
+	"github.com/billygate/kapctl/internal/docker"
+	"github.com/billygate/kapctl/internal/spacebox"
 	"github.com/spf13/cobra"
 )
 

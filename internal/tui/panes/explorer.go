@@ -21,11 +21,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/billygate/kap-toolsbox/internal/kube"
-	"github.com/billygate/kap-toolsbox/internal/portfwd"
-	"github.com/billygate/kap-toolsbox/internal/tui/core"
-	"github.com/billygate/kap-toolsbox/internal/tui/overlays"
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/kube"
+	"github.com/billygate/kapctl/internal/portfwd"
+	"github.com/billygate/kapctl/internal/tui/core"
+	"github.com/billygate/kapctl/internal/tui/overlays"
+	"github.com/billygate/kapctl/internal/tui/styles"
 )
 
 // newKubeClient is the package-level handle to kube.NewClient that

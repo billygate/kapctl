@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
 )
 

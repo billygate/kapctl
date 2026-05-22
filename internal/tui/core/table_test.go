@@ -5,8 +5,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 
-	"github.com/billygate/kap-toolsbox/internal/tui/styles"
-	"github.com/billygate/kap-toolsbox/internal/tui/themes"
+	"github.com/billygate/kapctl/internal/tui/styles"
+	"github.com/billygate/kapctl/internal/tui/themes"
 )
 
 func newTestTableStyles() *styles.Styles {
