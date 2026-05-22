@@ -12,6 +12,7 @@ import (
 
 const (
 	reconnectBudget = 120 * time.Second
+	livenessTick    = 5 * time.Second
 )
 
 var backoffSchedule = []time.Duration{
@@ -101,6 +102,9 @@ func (m *Manager) runOneAttempt(ctx context.Context, e *entry) (reason string, e
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- e.cmd.Wait() }()
 
+	ticker := m.clock.NewTicker(livenessTick)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-readyCh:
@@ -109,13 +113,16 @@ func (m *Manager) runOneAttempt(ctx context.Context, e *entry) (reason string, e
 			e.attempts = 0
 			e.reconnectStartedAt = time.Time{}
 			e.mu.Unlock()
-			// Don't clear lastReconnectReason here — Task 14's toast policy
-			// reads it to emit a "reconnected" success toast. recordFailure
-			// will overwrite it on the next failure.
+			// Don't clear lastReconnectReason here — toast policy in Task 14
+			// reads it to emit a "reconnected" success toast.
+		case <-ticker.C():
+			if reason := m.probeOnce(ctx, e); reason != "" {
+				return reason, false
+			}
 		case err := <-waitErr:
 			close(procDone)
 			if ctx.Err() != nil {
-				return "", false // Stop wins
+				return "", false
 			}
 			if err != nil && !errors.Is(err, context.Canceled) {
 				return "subprocess exited: " + err.Error(), false
@@ -165,6 +172,62 @@ func (m *Manager) recordFailure(ctx context.Context, e *entry, reason string) (s
 		m.emit(Event{ID: e.id, Status: StatusStopped})
 		return true
 	}
+}
+
+// probeOnce runs one liveness probe. Returns a non-empty reason if the
+// forward should reconnect; empty string means the forward is still healthy.
+//
+// Probes only run while Status == StatusRunning (no probing during Starting
+// or Reconnecting). For KindService the GetPod check is skipped — kubectl
+// re-resolves the backing pod itself on restart.
+func (m *Manager) probeOnce(ctx context.Context, e *entry) string {
+	e.mu.Lock()
+	status := e.status
+	kind := e.opts.Kind
+	ns := e.opts.Namespace
+	target := e.opts.Target
+	expectedUID := e.podUID
+	e.mu.Unlock()
+	if status != StatusRunning {
+		return ""
+	}
+	if kind != KindPod {
+		return ""
+	}
+
+	prober, _ := m.getProberForEntry(e)
+	if prober == nil {
+		return ""
+	}
+
+	pod, err := prober.GetPod(ctx, ns, target)
+	if errors.Is(err, ErrPodNotFound) {
+		return "pod gone"
+	}
+	if err != nil {
+		// Transient API error — ignore. Will retry on next tick.
+		return ""
+	}
+	if pod.Phase != "Running" {
+		return "pod phase " + pod.Phase
+	}
+	if expectedUID != "" && pod.UID != expectedUID {
+		return "pod recreated (UID changed)"
+	}
+	return ""
+}
+
+// getProberForEntry lazily builds a Prober for the entry's context.
+// Returns nil if no factory is set (then probing is skipped — the
+// supervisor still detects subprocess exit).
+func (m *Manager) getProberForEntry(e *entry) (Prober, error) {
+	m.mu.Lock()
+	f := m.proberFactory
+	m.mu.Unlock()
+	if f == nil {
+		return nil, nil
+	}
+	return f(e.opts.Context)
 }
 
 // readLogs scans a pipe line-by-line into the entry's ring buffer.
