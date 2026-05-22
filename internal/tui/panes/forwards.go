@@ -15,21 +15,40 @@ import (
 	"github.com/billygate/kap-toolsbox/internal/tui/styles"
 )
 
-// fwdRow is the RowProvider adapter for portfwd.Snapshot.
-type fwdRow struct{ portfwd.Snapshot }
+// fwdRow is the RowProvider adapter for portfwd.Snapshot. The captured
+// `now` lets tests assert deterministic age + countdown text.
+type fwdRow struct {
+	portfwd.Snapshot
+	now time.Time
+}
 
 func (f fwdRow) Cells() table.Row {
 	target := f.Kind.Prefix() + f.Target
-	age := time.Since(f.StartedAt).Round(time.Second).String()
+	age := f.now.Sub(f.StartedAt).Round(time.Second).String()
+	status := f.Status.String()
+	if f.Status == portfwd.StatusReconnecting && !f.ReconnectStartedAt.IsZero() {
+		remaining := (120 * time.Second) - f.now.Sub(f.ReconnectStartedAt)
+		if remaining < 0 {
+			remaining = 0
+		}
+		status = fmt.Sprintf("reconnecting %d/%ds", f.Attempts, int(remaining.Seconds()))
+	}
 	return table.Row{
 		fmt.Sprintf("%d", f.LocalPort),
 		target,
 		f.Namespace,
-		f.Status.String(),
+		status,
 		age,
 	}
 }
 func (f fwdRow) FilterValue() string { return f.Target }
+
+// NewFwdRowForTest exposes the row constructor with a fixed `now` for
+// deterministic tests of status-cell formatting. Production code calls
+// refresh() which uses time.Now().
+func NewFwdRowForTest(s portfwd.Snapshot, now time.Time) fwdRow {
+	return fwdRow{Snapshot: s, now: now}
+}
 
 // Forwards is the pane that lists active port-forward processes and
 // lets the user stop them. State is fully derived from the
@@ -170,10 +189,11 @@ func (f *Forwards) refresh() {
 	if f.mgr == nil {
 		return
 	}
+	now := time.Now()
 	snaps := f.mgr.List()
 	items := make([]core.RowProvider, 0, len(snaps))
 	for _, s := range snaps {
-		items = append(items, fwdRow{Snapshot: s})
+		items = append(items, fwdRow{Snapshot: s, now: now})
 	}
 	f.tbl.SetItems(items)
 }
@@ -228,14 +248,41 @@ func (f *Forwards) toggleLogs() {
 
 // eventToToast lifts portfwd state transitions into user-visible toasts.
 // Only the "interesting" transitions are surfaced — Starting is silent,
-// Running confirms success, Errored is loud, Stopped is informational.
+// Running confirms success (or reconnection), Errored is loud, Stopped
+// is informational. Reconnect series produce at most one info toast
+// (on the first attempt) to avoid spamming the queue.
 func (f *Forwards) eventToToast(ev portfwd.Event) tea.Cmd {
+	if f.mgr == nil {
+		return nil
+	}
+	// Look up the current snapshot for state-dependent decisions.
+	var snap portfwd.Snapshot
+	for _, s := range f.mgr.List() {
+		if s.ID == ev.ID {
+			snap = s
+			break
+		}
+	}
+
 	var kind overlays.ToastKind
 	var text string
 	switch ev.Status {
 	case portfwd.StatusRunning:
-		kind = overlays.ToastSuccess
-		text = "port-forward running (" + ev.ID + ")"
+		if snap.LastReconnectReason != "" {
+			kind = overlays.ToastSuccess
+			text = "port-forward " + ev.ID + " reconnected"
+		} else {
+			kind = overlays.ToastSuccess
+			text = "port-forward running (" + ev.ID + ")"
+		}
+	case portfwd.StatusReconnecting:
+		// Only the first event of a reconnect series produces a toast;
+		// subsequent attempts in the same series are silent to avoid spam.
+		if snap.Attempts > 1 {
+			return nil
+		}
+		kind = overlays.ToastInfo
+		text = "port-forward " + ev.ID + " reconnecting: " + ev.Detail
 	case portfwd.StatusErrored:
 		kind = overlays.ToastError
 		if ev.Detail != "" {

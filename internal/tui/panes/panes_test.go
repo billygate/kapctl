@@ -7,11 +7,13 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/billygate/kap-toolsbox/internal/docker"
 	"github.com/billygate/kap-toolsbox/internal/kube"
+	"github.com/billygate/kap-toolsbox/internal/portfwd"
 	"github.com/billygate/kap-toolsbox/internal/tui/core"
 	"github.com/billygate/kap-toolsbox/internal/tui/overlays"
 	"github.com/billygate/kap-toolsbox/internal/tui/styles"
@@ -958,5 +960,35 @@ func TestExplorerBackDoesNotTouchResumeStore(t *testing.T) {
 
 	if r.ctx != "alpha" || r.ns != "payments" {
 		t.Errorf("Back should not touch ResumeStore, got ctx=%q ns=%q (want alpha/payments)", r.ctx, r.ns)
+	}
+}
+
+func TestForwardsRendersReconnectingWithCountdown(t *testing.T) {
+	now := time.Now()
+	snap := portfwd.Snapshot{
+		ID: "1", LocalPort: 5432, Target: "pg-0", Namespace: "ns",
+		Kind: portfwd.KindPod, Status: portfwd.StatusReconnecting,
+		StartedAt:          now.Add(-30 * time.Second),
+		Attempts:           2,
+		ReconnectStartedAt: now.Add(-30 * time.Second),
+	}
+	row := NewFwdRowForTest(snap, now)
+	cells := row.Cells()
+	if cells[3] != "reconnecting 2/90s" {
+		t.Errorf("status cell = %q, want %q", cells[3], "reconnecting 2/90s")
+	}
+}
+
+func TestForwardsRendersRunningPlain(t *testing.T) {
+	now := time.Now()
+	snap := portfwd.Snapshot{
+		ID: "1", LocalPort: 5432, Target: "pg-0", Namespace: "ns",
+		Kind: portfwd.KindPod, Status: portfwd.StatusRunning,
+		StartedAt: now.Add(-30 * time.Second),
+	}
+	row := NewFwdRowForTest(snap, now)
+	cells := row.Cells()
+	if cells[3] != "running" {
+		t.Errorf("status cell = %q, want %q", cells[3], "running")
 	}
 }
