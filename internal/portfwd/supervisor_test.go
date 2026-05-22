@@ -3,6 +3,7 @@ package portfwd
 import (
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -107,4 +108,57 @@ func TestSupervisorReconnectsWhenPodGoesAway(t *testing.T) {
 	}
 
 	_ = m.Stop(id)
+}
+
+func TestSupervisorReResolvesPodByLabels(t *testing.T) {
+	m := NewManager(16, 64)
+
+	var calls []string
+	var callsMu sync.Mutex
+	builder := func(opts StartOpts) *exec.Cmd {
+		callsMu.Lock()
+		calls = append(calls, opts.Target)
+		callsMu.Unlock()
+		return exec.Command("/bin/sh", "-c",
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n' >&2; sleep 30`)
+	}
+	m.SetCmdBuilder(builder)
+
+	clk := newFakeClock(time.Now())
+	m.SetClock(clk)
+
+	fp := newFakeProber()
+	fp.resolveResp["ns/pg-0"] = PodRef{
+		Name: "pg-0", UID: "uid-1", Phase: "Running", Ready: true,
+		Labels: map[string]string{"app": "pg"},
+	}
+	fp.getNotFound["ns/pg-0"] = true   // pod gone on first liveness tick
+	fp.findResp["ns/app=pg,"] = "pg-1" // re-resolution returns pg-1
+	m.SetProberFactory(func(string) (Prober, error) { return fp, nil })
+
+	_, err := m.Start(StartOpts{
+		Context: "ctx", Namespace: "ns", Target: "pg-0",
+		Kind: KindPod, LocalPort: 5432, RemotePort: 5432,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+	clk.Advance(6 * time.Second) // liveness tick → pod gone
+	waitFor(t, m.Events(), StatusReconnecting, 3*time.Second)
+	clk.Advance(2 * time.Second) // past 1s backoff
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if len(calls) < 2 {
+		t.Fatalf("builder called %d times, want >= 2", len(calls))
+	}
+	if calls[0] != "pg-0" {
+		t.Errorf("first call target = %q, want pg-0", calls[0])
+	}
+	if calls[1] != "pg-1" {
+		t.Errorf("second call target = %q, want pg-1 (re-resolved)", calls[1])
+	}
 }

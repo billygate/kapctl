@@ -35,7 +35,22 @@ func (m *Manager) supervise(ctx context.Context, e *entry) {
 		e.mu.Unlock()
 		m.emit(Event{ID: e.id, Status: StatusStarting})
 
-		reason, exitedClean := m.runOneAttempt(ctx, e)
+		target, err := m.resolveTarget(ctx, e)
+		if err != nil {
+			if ctx.Err() != nil {
+				e.mu.Lock()
+				e.status = StatusStopped
+				e.mu.Unlock()
+				m.emit(Event{ID: e.id, Status: StatusStopped})
+				return
+			}
+			if m.recordFailure(ctx, e, "resolve target: "+err.Error()) {
+				return
+			}
+			continue
+		}
+
+		reason, exitedClean := m.runOneAttempt(ctx, e, target)
 
 		// Stop wins races with everything.
 		if ctx.Err() != nil {
@@ -64,8 +79,10 @@ func (m *Manager) supervise(ctx context.Context, e *entry) {
 // runOneAttempt launches kubectl once. Returns (reason, exitedClean).
 // On a successful "Forwarding from", clears reconnect bookkeeping
 // before settling into the wait-for-exit phase.
-func (m *Manager) runOneAttempt(ctx context.Context, e *entry) (reason string, exitedClean bool) {
-	e.cmd = m.builder(e.opts)
+func (m *Manager) runOneAttempt(ctx context.Context, e *entry, target string) (reason string, exitedClean bool) {
+	opts := e.opts
+	opts.Target = target
+	e.cmd = m.builder(opts)
 
 	stderr, err := e.cmd.StderrPipe()
 	if err != nil {
@@ -172,6 +189,37 @@ func (m *Manager) recordFailure(ctx context.Context, e *entry, reason string) (s
 		m.emit(Event{ID: e.id, Status: StatusStopped})
 		return true
 	}
+}
+
+// resolveTarget returns the pod/service name kubectl should target this
+// attempt. KindService is always opts.Target (kubectl picks a fresh
+// backing pod itself). For KindPod, the first attempt uses opts.Target;
+// subsequent attempts re-find a Ready pod by labels saved at Start time.
+func (m *Manager) resolveTarget(ctx context.Context, e *entry) (string, error) {
+	if e.opts.Kind == KindService {
+		return e.opts.Target, nil
+	}
+	e.mu.Lock()
+	firstAttempt := e.attempts == 0
+	labels := e.podLabels
+	origTarget := e.opts.Target
+	e.mu.Unlock()
+	if firstAttempt || len(labels) == 0 {
+		return origTarget, nil
+	}
+	prober, err := m.getProberForEntry(e)
+	if err != nil || prober == nil {
+		return origTarget, nil
+	}
+	name, err := prober.FindReadyPodByLabels(ctx, e.opts.Namespace, labels)
+	if err != nil {
+		return "", err
+	}
+	// Cache the new name for subsequent liveness probing this attempt.
+	e.mu.Lock()
+	e.opts.Target = name
+	e.mu.Unlock()
+	return name, nil
 }
 
 // probeOnce runs one liveness probe. Returns a non-empty reason if the

@@ -261,6 +261,34 @@ func (m *Manager) Start(opts StartOpts) (string, error) {
 	m.entries[id] = e
 	m.mu.Unlock()
 
+	// For pod-forwards, resolve the pod's stable labels + UID up-front
+	// so the supervisor can re-find a Ready pod by labels after a
+	// rollout. ResolvePod failure aborts Start (e.g., pod doesn't exist,
+	// RBAC denied) — better to fail fast than to register a forward
+	// that will immediately enter reconnect-loop hell.
+	if opts.Kind == KindPod {
+		if prober, perr := m.getProberForEntry(e); perr != nil {
+			m.mu.Lock()
+			delete(m.entries, id)
+			m.mu.Unlock()
+			cancel()
+			return "", fmt.Errorf("portfwd: prober factory: %w", perr)
+		} else if prober != nil {
+			ref, rerr := prober.ResolvePod(context.Background(), opts.Namespace, opts.Target)
+			if rerr != nil {
+				m.mu.Lock()
+				delete(m.entries, id)
+				m.mu.Unlock()
+				cancel()
+				return "", fmt.Errorf("portfwd: resolve pod: %w", rerr)
+			}
+			e.mu.Lock()
+			e.podUID = ref.UID
+			e.podLabels = ref.Labels
+			e.mu.Unlock()
+		}
+	}
+
 	go m.supervise(ctx, e)
 	return id, nil
 }

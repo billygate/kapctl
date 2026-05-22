@@ -124,11 +124,14 @@ func (f *fakeProber) ResolvePod(_ context.Context, ns, name string) (PodRef, err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := ns + "/" + name
-	if f.getNotFound[key] {
-		return PodRef{}, ErrPodNotFound
-	}
+	// Explicit resolveResp wins over getNotFound — tests that mark a pod
+	// as gone (for liveness purposes) still want the initial Start-time
+	// ResolvePod to succeed.
 	if r, ok := f.resolveResp[key]; ok {
 		return r, nil
+	}
+	if f.getNotFound[key] {
+		return PodRef{}, ErrPodNotFound
 	}
 	return PodRef{Name: name, UID: "uid-" + name, Phase: "Running", Ready: true, Labels: map[string]string{"app": "demo"}}, nil
 }
