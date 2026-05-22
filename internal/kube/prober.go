@@ -106,19 +106,19 @@ func (c *Client) ownerSelectorLabels(ctx context.Context, namespace string, pod 
 			if err != nil || rs.Spec.Selector == nil {
 				continue
 			}
-			return cloneStringMap(rs.Spec.Selector.MatchLabels)
+			return filterBlacklist(rs.Spec.Selector.MatchLabels)
 		case "StatefulSet":
 			ss, err := c.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 			if err != nil || ss.Spec.Selector == nil {
 				continue
 			}
-			return cloneStringMap(ss.Spec.Selector.MatchLabels)
+			return filterBlacklist(ss.Spec.Selector.MatchLabels)
 		case "DaemonSet":
 			ds, err := c.Clientset.AppsV1().DaemonSets(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 			if err != nil || ds.Spec.Selector == nil {
 				continue
 			}
-			return cloneStringMap(ds.Spec.Selector.MatchLabels)
+			return filterBlacklist(ds.Spec.Selector.MatchLabels)
 		}
 	}
 	return nil
@@ -130,14 +130,6 @@ func filterBlacklist(in map[string]string) map[string]string {
 		if labelBlacklist[k] {
 			continue
 		}
-		out[k] = v
-	}
-	return out
-}
-
-func cloneStringMap(m map[string]string) map[string]string {
-	out := make(map[string]string, len(m))
-	for k, v := range m {
 		out[k] = v
 	}
 	return out

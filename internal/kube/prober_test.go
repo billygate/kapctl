@@ -57,6 +57,51 @@ func TestResolvePodUsesOwnerSelectorLabels(t *testing.T) {
 	}
 }
 
+func TestResolvePodStripsHashFromReplicaSetSelector(t *testing.T) {
+	rs := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo-rs-abc123",
+			Namespace: "ns",
+			UID:       "rs-uid",
+		},
+		Spec: appsv1.ReplicaSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":               "demo",
+					"pod-template-hash": "abc123",
+				},
+			},
+		},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo-pod",
+			Namespace: "ns",
+			UID:       "pod-uid",
+			Labels: map[string]string{
+				"app":               "demo",
+				"pod-template-hash": "abc123",
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{Kind: "ReplicaSet", Name: "demo-rs-abc123", UID: types.UID("rs-uid"), Controller: ptrBool(true)},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+
+	c := newTestClient(pod, rs)
+	ref, err := c.ResolvePod(context.Background(), "ns", "demo-pod")
+	if err != nil {
+		t.Fatalf("ResolvePod: %v", err)
+	}
+	if _, ok := ref.Labels["pod-template-hash"]; ok {
+		t.Errorf("RS selector pod-template-hash should be stripped: %+v", ref.Labels)
+	}
+	if ref.Labels["app"] != "demo" {
+		t.Errorf("missing app=demo: %+v", ref.Labels)
+	}
+}
+
 func TestResolvePodBarePodUsesFilteredLabels(t *testing.T) {
 	// Pod with no OwnerReferences — fall back to pod.Labels minus blacklist.
 	pod := &corev1.Pod{

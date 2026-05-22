@@ -112,6 +112,52 @@ func TestSupervisorReconnectsWhenPodGoesAway(t *testing.T) {
 	_ = m.Stop(id)
 }
 
+func TestSupervisorReconnectsOnUIDChange(t *testing.T) {
+	m := NewManager(16, 64)
+
+	okBuilder := func(_ StartOpts) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c",
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n' >&2; sleep 30`)
+	}
+	m.SetCmdBuilder(okBuilder)
+
+	clk := newFakeClock(time.Now())
+	m.SetClock(clk)
+
+	fp := newFakeProber()
+	fp.resolveResp["ns/pg-0"] = PodRef{
+		Name: "pg-0", UID: "uid-original", Phase: "Running", Ready: true,
+		Labels: map[string]string{"app": "pg"},
+	}
+	m.SetProberFactory(func(string) (Prober, error) { return fp, nil })
+
+	id, err := m.Start(StartOpts{
+		Context: "ctx", Namespace: "ns", Target: "pg-0",
+		Kind: KindPod, LocalPort: 5432, RemotePort: 5432,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+
+	// Flip GetPod to return same name but different UID (pod was recreated).
+	fp.mu.Lock()
+	fp.getResp["ns/pg-0"] = PodRef{
+		Name: "pg-0", UID: "uid-recreated", Phase: "Running", Ready: true,
+	}
+	fp.mu.Unlock()
+
+	// Advance past the 5s liveness tick.
+	clk.Advance(6 * time.Second)
+
+	ev := waitFor(t, m.Events(), StatusReconnecting, 3*time.Second)
+	if !strings.Contains(strings.ToLower(ev.Detail), "uid") {
+		t.Errorf("Reconnecting detail = %q, want it to mention UID", ev.Detail)
+	}
+
+	_ = m.Stop(id)
+}
+
 func TestSupervisorReResolvesPodByLabels(t *testing.T) {
 	m := NewManager(16, 64)
 

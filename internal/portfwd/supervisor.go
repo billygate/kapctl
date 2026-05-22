@@ -139,8 +139,9 @@ func (m *Manager) runOneAttempt(ctx context.Context, e *entry, target string) (r
 			e.reconnectStartedAt = time.Time{}
 			e.tcpFailStreak = 0
 			e.mu.Unlock()
-			// Don't clear lastReconnectReason here — toast policy in Task 14
-			// reads it to emit a "reconnected" success toast.
+			// Retain lastReconnectReason so eventToToast can emit the
+			// "reconnected" success toast when status transitions to Running.
+			// recordFailure overwrites it on the next failure.
 		case <-ticker.C():
 			if reason := m.probeOnce(ctx, e); reason != "" {
 				return reason, false
