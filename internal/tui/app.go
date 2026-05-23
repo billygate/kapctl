@@ -1,5 +1,6 @@
-// Package tui hosts the root tabbed Bubble Tea program (EXPLORER + LOCAL)
-// and the `RunApp` entrypoint invoked from the kapctl CLI.
+// Package tui hosts the root tabbed Bubble Tea program
+// (LOCAL | EXPLORER | FORWARDS) and the `RunApp` entrypoint invoked
+// from the kapctl CLI.
 package tui
 
 import (
@@ -60,18 +61,28 @@ func NewAppModel(cfg *config.Config) (*AppModel, error) {
 		return kube.NewClient(contextName)
 	})
 
-	// LOCAL tab is gated on the spacebox CLI being on PATH. Without it
-	// the cluster-lifecycle actions in the pane have no backend, so we
-	// drop the tab entirely rather than show a half-working surface.
-	tabs := []string{"EXPLORER"}
+	// Tab layout: LOCAL (if available) | EXPLORER | FORWARDS — EXPLORER
+	// sits in the middle as the primary workflow and is the default
+	// active tab. LOCAL is gated on the spacebox CLI being on PATH;
+	// without it the cluster-lifecycle actions in the pane have no
+	// backend, so we drop the tab entirely rather than show a
+	// half-working surface.
+	var tabs []string
 	if spacebox.IsInstalled() {
 		tabs = append(tabs, "LOCAL")
 	}
-	tabs = append(tabs, "FORWARDS")
+	tabs = append(tabs, "EXPLORER", "FORWARDS")
+	activeTab := 0
+	for i, t := range tabs {
+		if t == "EXPLORER" {
+			activeTab = i
+			break
+		}
+	}
 
 	return &AppModel{
 		tabs:        tabs,
-		activeTab:   0,
+		activeTab:   activeTab,
 		explorer:    panes.NewExplorer(nil, nil, s, cfg),
 		local:       panes.NewLocal(nil, s),
 		forwards:    panes.NewForwards(mgr, s),

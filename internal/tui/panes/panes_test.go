@@ -979,6 +979,239 @@ func TestForwardsRendersReconnectingWithCountdown(t *testing.T) {
 	}
 }
 
+// findCustomItemIndex returns the index of the "custom (edit ports)"
+// label in the list, or -1 if not found.
+func findCustomItemIndex(e *Explorer) int {
+	for i, it := range e.list.Items() {
+		li, ok := core.AsListItem(it)
+		if !ok {
+			continue
+		}
+		if overlays.IsCustomPortChoice(li.Text) {
+			return i
+		}
+	}
+	return -1
+}
+
+// findItemIndexByPrefix returns the index of the first list item whose
+// label starts with the given prefix (after trimming).
+func findItemIndexByPrefix(e *Explorer, prefix string) int {
+	for i, it := range e.list.Items() {
+		li, ok := core.AsListItem(it)
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(li.Text), prefix) {
+			return i
+		}
+	}
+	return -1
+}
+
+// freePort grabs and releases a free local port. There is a small race
+// window between release and reuse — acceptable for these tests.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	_, portStr, _ := net.SplitHostPort(l.Addr().String())
+	_ = l.Close()
+	p, _ := strconv.Atoi(portStr)
+	return p
+}
+
+func TestExplorerSelectCustomPrefillsFirstDetected(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.pod = "pg-0"
+	e.podPorts = []kube.ContainerPort{{Name: "pg", Port: 5432}}
+	e.step = stepPort
+	e.initView(e.width, e.height)
+
+	idx := findCustomItemIndex(e)
+	if idx < 0 {
+		t.Fatal("custom item not found in port list")
+	}
+	e.list.Select(idx)
+
+	if _, _ = e.handleSelect(); e.step != stepPortForm {
+		t.Fatalf("step = %v, want stepPortForm", e.step)
+	}
+	// First detected port is 5432; it should land in both fields. The
+	// local-port probe may bump if 5432 is in use locally, so only the
+	// remote field is asserted strictly.
+	if e.formRemote.Value() != "5432" {
+		t.Errorf("formRemote = %q, want %q", e.formRemote.Value(), "5432")
+	}
+	if e.formLocal.Value() == "" {
+		t.Errorf("formLocal is empty; expected a prefilled value")
+	}
+}
+
+func TestExplorerSelectCustomNoDetectedKeepsEmpty(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.pod = "pg-0"
+	e.podPorts = nil
+	e.step = stepPort
+	e.initView(e.width, e.height)
+
+	idx := findCustomItemIndex(e)
+	if idx < 0 {
+		t.Fatal("custom item not found in port list")
+	}
+	e.list.Select(idx)
+
+	_, _ = e.handleSelect()
+	if e.step != stepPortForm {
+		t.Fatalf("step = %v, want stepPortForm", e.step)
+	}
+	if e.formLocal.Value() != "" || e.formRemote.Value() != "" {
+		t.Errorf("expected empty fields when no detected ports; got local=%q remote=%q",
+			e.formLocal.Value(), e.formRemote.Value())
+	}
+}
+
+func TestExplorerSelectKnownPortRoutesThroughForm(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.pod = "pg-0"
+	e.podPorts = []kube.ContainerPort{{Name: "pg", Port: 5432}}
+	e.step = stepPort
+	e.initView(e.width, e.height)
+
+	idx := findItemIndexByPrefix(e, "5432")
+	if idx < 0 {
+		t.Fatal("5432 item not found in port list")
+	}
+	e.list.Select(idx)
+
+	_, _ = e.handleSelect()
+	if e.step != stepPortForm {
+		t.Fatalf("step = %v, want stepPortForm (form, not direct fire)", e.step)
+	}
+	if e.formRemote.Value() != "5432" {
+		t.Errorf("formRemote = %q, want %q", e.formRemote.Value(), "5432")
+	}
+}
+
+func TestExplorerSubmitPortFormAsymmetric(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.ctx, e.ns, e.pod = "ctx-a", "ns", "pg-0"
+	e.step = stepPortForm
+	e.formLocal = newPortInput()
+	e.formRemote = newPortInput()
+
+	local := freePort(t)
+	e.formLocal.SetValue(strconv.Itoa(local))
+	e.formRemote.SetValue("80")
+
+	_, cmd := e.submitPortForm()
+	if e.formErr != "" {
+		t.Fatalf("formErr = %q, want empty", e.formErr)
+	}
+	if cmd == nil {
+		t.Fatal("submitPortForm returned nil cmd")
+	}
+	msg := cmd()
+	req, ok := msg.(core.PortForwardRequestMsg)
+	if !ok {
+		t.Fatalf("emitted message = %T, want core.PortForwardRequestMsg", msg)
+	}
+	if req.LocalPort != local || req.RemotePort != 80 {
+		t.Errorf("LocalPort=%d RemotePort=%d, want %d / 80", req.LocalPort, req.RemotePort, local)
+	}
+	if req.Target != "pg-0" || req.Namespace != "ns" || req.Context != "ctx-a" {
+		t.Errorf("unexpected request: %+v", req)
+	}
+	if req.Kind != portfwd.KindPod {
+		t.Errorf("Kind = %v, want pod", req.Kind)
+	}
+}
+
+func TestExplorerSubmitPortFormValidatesFields(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
+	cases := []struct {
+		name   string
+		local  string
+		remote string
+		wantIn string
+	}{
+		{"empty local", "", "80", "Local: required"},
+		{"empty remote", "8080", "", "Remote: required"},
+		{"out of range local", "70000", "80", "Local: out of range"},
+		{"out of range remote", "8080", "0", "Remote: out of range"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := NewExplorer(mk, nil, s, nil)
+			e.step = stepPortForm
+			e.formLocal = newPortInput()
+			e.formRemote = newPortInput()
+			e.formLocal.SetValue(c.local)
+			e.formRemote.SetValue(c.remote)
+
+			_, cmd := e.submitPortForm()
+			if cmd != nil {
+				t.Errorf("cmd should be nil on validation failure")
+			}
+			if !strings.Contains(e.formErr, c.wantIn) {
+				t.Errorf("formErr = %q, want substring %q", e.formErr, c.wantIn)
+			}
+		})
+	}
+}
+
+func TestExplorerPortFormTabTogglesFocus(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.enterPortForm(8080, 80)
+
+	if e.formFocus != 0 {
+		t.Fatalf("formFocus = %d, want 0 (Local) at start", e.formFocus)
+	}
+	_, _ = e.updatePortForm(tea.KeyMsg{Type: tea.KeyTab})
+	if e.formFocus != 1 {
+		t.Errorf("formFocus = %d after tab, want 1 (Remote)", e.formFocus)
+	}
+	_, _ = e.updatePortForm(tea.KeyMsg{Type: tea.KeyTab})
+	if e.formFocus != 0 {
+		t.Errorf("formFocus = %d after second tab, want 0 (Local)", e.formFocus)
+	}
+}
+
+func TestExplorerPortFormEscReturnsToPort(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
+	e := NewExplorer(mk, nil, s, nil)
+	e.SetSize(80, 24)
+	e.pod = "pg-0"
+	e.podPorts = []kube.ContainerPort{{Name: "pg", Port: 5432}}
+	e.enterPortForm(5432, 5432)
+	e.formErr = "stale"
+
+	_, _ = e.updatePortForm(tea.KeyMsg{Type: tea.KeyEsc})
+	if e.step != stepPort {
+		t.Errorf("step = %v, want stepPort after esc", e.step)
+	}
+	if e.formErr != "" {
+		t.Errorf("formErr = %q, want cleared", e.formErr)
+	}
+}
+
 func TestForwardsRendersRunningPlain(t *testing.T) {
 	now := time.Now()
 	snap := portfwd.Snapshot{

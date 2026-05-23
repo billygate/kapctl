@@ -411,8 +411,14 @@ func (e *Explorer) updatePodTable(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
 	return e, cmd
 }
 
-// updateList drives the list-backed steps (context/namespace/action/port).
+// updateList drives the list-backed steps (context/namespace/action/port)
+// plus the two-field port form (stepPortForm), which owns its own key
+// handling and bypasses the list entirely.
 func (e *Explorer) updateList(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
+	if e.step == stepPortForm {
+		return e.updatePortForm(keyMsg)
+	}
+
 	if e.list.FilterState() == list.Filtering {
 		if key.Matches(keyMsg, core.Keys.Select) {
 			updated, _ := e.list.Update(keyMsg)
@@ -600,7 +606,26 @@ func (e *Explorer) handleSelect() (*Explorer, tea.Cmd) {
 		}
 		return e, e.runAction(val, "")
 	case stepPort:
-		return e, e.runAction(e.action, val)
+		// Route every selection through the port-form so the user can
+		// confirm or edit the mapping (and so we apply the bump-on-conflict
+		// check). Custom prefills both fields with the first detected port
+		// when one exists; otherwise the fields start empty.
+		if overlays.IsCustomPortChoice(val) {
+			def := 0
+			if len(e.podPorts) > 0 {
+				def = int(e.podPorts[0].Port)
+			}
+			e.enterPortForm(def, def)
+			return e, nil
+		}
+		p, err := overlays.ParsePort(val)
+		if err != nil {
+			return e, func() tea.Msg {
+				return overlays.ToastMsg{Kind: overlays.ToastError, Text: "invalid port: " + val}
+			}
+		}
+		e.enterPortForm(p, p)
+		return e, nil
 	}
 	return e, nil
 }
@@ -871,6 +896,91 @@ func (e *Explorer) enterPortForm(local, remote int) {
 	e.step = stepPortForm
 }
 
+// updatePortForm handles keys while the port-mapping form is active:
+// esc returns to the picker, tab/shift+tab toggles focus, enter validates
+// and emits a PortForwardRequestMsg; other keys are forwarded to the
+// focused textinput.
+func (e *Explorer) updatePortForm(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
+	switch keyMsg.String() {
+	case "esc":
+		e.step = stepPort
+		e.formErr = ""
+		e.formInfo = ""
+		e.formLocal.Blur()
+		e.formRemote.Blur()
+		e.initView(e.width, e.height)
+		return e, nil
+	case "tab", "shift+tab":
+		if e.formFocus == 0 {
+			e.formFocus = 1
+			e.formLocal.Blur()
+			e.formRemote.Focus()
+		} else {
+			e.formFocus = 0
+			e.formRemote.Blur()
+			e.formLocal.Focus()
+		}
+		return e, nil
+	case "enter":
+		return e.submitPortForm()
+	}
+
+	var cmd tea.Cmd
+	if e.formFocus == 0 {
+		e.formLocal, cmd = e.formLocal.Update(keyMsg)
+	} else {
+		e.formRemote, cmd = e.formRemote.Update(keyMsg)
+	}
+	return e, cmd
+}
+
+// submitPortForm validates the form and emits a PortForwardRequestMsg
+// for the AppModel to forward to the portfwd manager. Validation errors
+// stay inline on the form via formErr; the form stays open so the user
+// can correct and retry.
+func (e *Explorer) submitPortForm() (*Explorer, tea.Cmd) {
+	local, lerr := parseFormPort(e.formLocal.Value())
+	remote, rerr := parseFormPort(e.formRemote.Value())
+	switch {
+	case lerr != nil:
+		e.formErr = "Local: " + lerr.Error()
+		return e, nil
+	case rerr != nil:
+		e.formErr = "Remote: " + rerr.Error()
+		return e, nil
+	}
+	if perr := portfwd.IsLocalPortFree(local); perr != nil {
+		e.formErr = fmt.Sprintf("local port %d is in use", local)
+		return e, nil
+	}
+	ctx, ns, pod := e.ctx, e.ns, e.pod
+	return e, func() tea.Msg {
+		return core.PortForwardRequestMsg{
+			Context: ctx, Namespace: ns, Target: pod,
+			Kind:       portfwd.KindPod,
+			LocalPort:  local,
+			RemotePort: remote,
+		}
+	}
+}
+
+// parseFormPort validates a single port-form field. Returns a short
+// message suitable for the inline formErr line.
+func parseFormPort(raw string) (int, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, fmt.Errorf("required")
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("not a number")
+	}
+	if n < 1 || n > 65535 {
+		return 0, fmt.Errorf("out of range (1..65535)")
+	}
+	return n, nil
+}
+
 // newPortInput builds a digit-only textinput sized for a port number.
 func newPortInput() textinput.Model {
 	ti := textinput.New()
@@ -888,10 +998,11 @@ func newPortInput() textinput.Model {
 }
 
 func (e *Explorer) runAction(action, port string) tea.Cmd {
-	// port-forward is special: it runs as a managed background process
-	// so the TUI stays interactive. The other actions (logs, exec,
-	// describe) are foreground — tea.ExecProcess suspends the TUI for
-	// their duration, which is the right UX.
+	// port-forward is handled separately through stepPortForm — it
+	// doesn't pass through this function. The actions that land here are
+	// either foreground kubectl invocations (logs/exec/describe), which
+	// run via tea.ExecProcess and suspend the TUI for their duration, or
+	// delete, which is a managed async load.
 	if action == "delete" {
 		e.loadErr = nil
 		kClient, ns, pod := e.kube, e.ns, e.pod
@@ -901,23 +1012,6 @@ func (e *Explorer) runAction(action, port string) tea.Cmd {
 			}
 			return podDeletedMsg{pod: pod}
 		})
-	}
-	if action == "port-forward" {
-		p, err := overlays.ParsePort(port)
-		if err != nil {
-			return func() tea.Msg {
-				return overlays.ToastMsg{Kind: overlays.ToastError, Text: "invalid port: " + port}
-			}
-		}
-		ctx, ns, pod := e.ctx, e.ns, e.pod
-		return func() tea.Msg {
-			return core.PortForwardRequestMsg{
-				Context: ctx, Namespace: ns, Target: pod,
-				Kind:       portfwd.KindPod,
-				LocalPort:  p,
-				RemotePort: p,
-			}
-		}
 	}
 	return tea.ExecProcess(buildExplorerCmd(e.ctx, e.ns, e.pod, action, port), func(_ error) tea.Msg {
 		return nil
