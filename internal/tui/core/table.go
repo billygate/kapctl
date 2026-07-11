@@ -252,27 +252,10 @@ func (t *Table) View() string {
 // handleNumeric implements the same 1-9 / 2-digit jump rules used by
 // the panes' list flows.
 func (t *Table) handleNumeric(digit string) {
-	t.inputBuf += digit
-	idx, _ := strconv.Atoi(t.inputBuf)
-	n := len(t.visible)
-
-	jump := func() {
-		if idx > 0 && idx <= n {
-			t.inner.SetCursor(idx - 1)
-		}
-		t.inputBuf = ""
-	}
-
-	if n < 10 {
-		jump()
-		return
-	}
-	if len(t.inputBuf) == 2 {
-		jump()
-		return
-	}
-	if idx*10 > n {
-		jump()
+	buf, idx, committed := NumericJump(t.inputBuf, digit, len(t.visible))
+	t.inputBuf = buf
+	if committed && idx > 0 {
+		t.inner.SetCursor(idx - 1)
 	}
 }
 
@@ -329,7 +312,10 @@ func (t *Table) refilterWithKey(prevKey string) {
 			}
 		}
 	}
-	if t.inner.Cursor() >= len(t.visible) {
+	// Cursor may be -1 here: bubbles' SetCursor clamps against an empty
+	// row set, and the inner table never recovers on its own when rows
+	// arrive later — reset it alongside the out-of-range case.
+	if c := t.inner.Cursor(); c < 0 || c >= len(t.visible) {
 		t.inner.SetCursor(0)
 	}
 }

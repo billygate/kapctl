@@ -82,6 +82,7 @@ func (p podRow) FilterValue() string { return p.Name }
 // pane renders a "Connecting…" placeholder so the TUI shows immediately.
 type Explorer struct {
 	step      explorerStep
+	listStep  explorerStep // step e.list was last built for (cursor preservation)
 	list      list.Model
 	podTable  *core.Table
 	ctx       string
@@ -486,9 +487,6 @@ func (e *Explorer) updateList(keyMsg tea.KeyMsg) (*Explorer, tea.Cmd) {
 }
 
 func (e *Explorer) handleNumeric(digit string) (*Explorer, tea.Cmd, bool) {
-	e.inputBuf += digit
-	idx, _ := strconv.Atoi(e.inputBuf)
-
 	// The item delegate renders a 1-based IDX that skips separators
 	// (so the user sees 1..N for selectable rows only). Numeric jump
 	// must map the typed index back to the underlying list position
@@ -501,27 +499,13 @@ func (e *Explorer) handleNumeric(digit string) (*Explorer, tea.Cmd, bool) {
 		}
 		selectablePositions = append(selectablePositions, i)
 	}
-	listSize := len(selectablePositions)
 
-	commit := func() (*Explorer, tea.Cmd, bool) {
-		if idx > 0 && idx <= listSize {
-			e.list.Select(selectablePositions[idx-1])
-			e.inputBuf = ""
-			m, c := e.handleSelect()
-			return m, c, true
-		}
-		e.inputBuf = ""
-		return e, nil, true
-	}
-
-	if listSize < 10 {
-		return commit()
-	}
-	if len(e.inputBuf) == 2 {
-		return commit()
-	}
-	if idx*10 > listSize {
-		return commit()
+	buf, idx, committed := core.NumericJump(e.inputBuf, digit, len(selectablePositions))
+	e.inputBuf = buf
+	if committed && idx > 0 {
+		e.list.Select(selectablePositions[idx-1])
+		m, c := e.handleSelect()
+		return m, c, true
 	}
 	return e, nil, true
 }
@@ -709,7 +693,14 @@ func (e *Explorer) populatePodTable(w, availableH int) {
 }
 
 func (e *Explorer) initList(w, availableH int) {
-	oldIdx := e.list.Index()
+	// Preserve the cursor only when rebuilding the same step's list
+	// (retry, periodic refresh). On a step transition the old index is
+	// meaningless for the new item set — start at the top.
+	oldIdx := 0
+	if e.listStep == e.step {
+		oldIdx = e.list.Index()
+	}
+	e.listStep = e.step
 
 	var items []list.Item
 	title := ""

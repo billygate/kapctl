@@ -82,7 +82,9 @@ func (m *Manager) supervise(ctx context.Context, e *entry) {
 
 // runOneAttempt launches kubectl once. Returns (reason, exitedClean).
 // On a successful "Forwarding from", clears reconnect bookkeeping
-// before settling into the wait-for-exit phase.
+// before settling into the wait-for-exit phase. Every return path
+// leaves the subprocess reaped, so the local port is free before the
+// next attempt starts.
 func (m *Manager) runOneAttempt(ctx context.Context, e *entry, target string) (reason string, exitedClean bool) {
 	e.mu.Lock()
 	e.tcpFailStreak = 0
@@ -90,64 +92,59 @@ func (m *Manager) runOneAttempt(ctx context.Context, e *entry, target string) (r
 
 	opts := e.opts
 	opts.Target = target
-	e.cmd = m.builder(opts)
+	cmd := m.builder(opts)
 
-	stderr, err := e.cmd.StderrPipe()
+	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return "stderr pipe: " + err.Error(), false
 	}
-	stdout, err := e.cmd.StdoutPipe()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "stdout pipe: " + err.Error(), false
 	}
-	if err := e.cmd.Start(); err != nil {
+	if err := cmd.Start(); err != nil {
 		return "kubectl start: " + err.Error(), false
 	}
 
-	procDone := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			if p := e.cmd.Process; p != nil {
-				_ = p.Signal(syscall.SIGTERM)
-				select {
-				case <-procDone:
-				case <-time.After(2 * time.Second):
-					_ = p.Kill()
-				}
-			}
-		case <-procDone:
-		}
-	}()
-
-	readyCh := make(chan struct{}, 1)
-	go m.readLogs(e, stderr, true, readyCh)
-	go m.readLogs(e, stdout, false, nil)
-
 	waitErr := make(chan error, 1)
-	go func() { waitErr <- e.cmd.Wait() }()
+	go func() { waitErr <- cmd.Wait() }()
+
+	// terminate reaps the subprocess: SIGTERM, escalate to SIGKILL after
+	// 2s, then join the Wait goroutine so the process (and its local
+	// port) is gone before runOneAttempt returns.
+	terminate := func() {
+		if p := cmd.Process; p != nil {
+			_ = p.Signal(syscall.SIGTERM)
+		}
+		select {
+		case <-waitErr:
+		case <-time.After(2 * time.Second):
+			if p := cmd.Process; p != nil {
+				_ = p.Kill()
+			}
+			<-waitErr
+		}
+	}
+
+	// kubectl prints the "Forwarding from" banner to stdout; stderr only
+	// carries errors.
+	go m.readLogs(e, stdout, true)
+	go m.readLogs(e, stderr, false)
 
 	ticker := m.clock.NewTicker(livenessTick)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-readyCh:
-			// Successfully reached Running — clear reconnect bookkeeping.
-			e.mu.Lock()
-			e.attempts = 0
-			e.reconnectStartedAt = time.Time{}
-			e.tcpFailStreak = 0
-			e.mu.Unlock()
-			// Retain lastReconnectReason so eventToToast can emit the
-			// "reconnected" success toast when status transitions to Running.
-			// recordFailure overwrites it on the next failure.
+		case <-ctx.Done():
+			terminate()
+			return "", false
 		case <-ticker.C():
 			if reason := m.probeOnce(ctx, e); reason != "" {
+				terminate()
 				return reason, false
 			}
 		case err := <-waitErr:
-			close(procDone)
 			if ctx.Err() != nil {
 				return "", false
 			}
@@ -225,9 +222,18 @@ func (m *Manager) resolveTarget(ctx context.Context, e *entry) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Adopt the new pod's UID — probing against the original pod's UID
+	// would flag "pod recreated" on every tick and reconnect forever. If
+	// the lookup fails transiently, clear the UID so the check is skipped
+	// rather than comparing against a stale value.
+	newUID := ""
+	if ref, gerr := prober.GetPod(ctx, e.opts.Namespace, name); gerr == nil {
+		newUID = ref.UID
+	}
 	// Cache the new name for subsequent liveness probing this attempt.
 	e.mu.Lock()
 	e.opts.Target = name
+	e.podUID = newUID
 	e.mu.Unlock()
 	return name, nil
 }
@@ -303,10 +309,11 @@ func (m *Manager) getProberForEntry(e *entry) (Prober, error) {
 }
 
 // readLogs scans a pipe line-by-line into the entry's ring buffer.
-// On stderr we look for kubectl's "Forwarding from" line and flip the
-// status from Starting → Running on first sight, also signalling on
-// readyCh so the supervisor can clear reconnect bookkeeping.
-func (m *Manager) readLogs(e *entry, r io.Reader, watchForReady bool, readyCh chan<- struct{}) {
+// On stdout we look for kubectl's "Forwarding from" line and flip the
+// status from Starting → Running on first sight, clearing reconnect
+// bookkeeping in the same critical section so a Running event is never
+// observable with stale attempt counters.
+func (m *Manager) readLogs(e *entry, r io.Reader, watchForReady bool) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	for scanner.Scan() {
@@ -316,14 +323,14 @@ func (m *Manager) readLogs(e *entry, r io.Reader, watchForReady bool, readyCh ch
 			e.mu.Lock()
 			if e.status == StatusStarting {
 				e.status = StatusRunning
+				e.attempts = 0
+				e.reconnectStartedAt = time.Time{}
+				e.tcpFailStreak = 0
+				// Retain lastReconnectReason so eventToToast can emit the
+				// "reconnected" success toast when status transitions to
+				// Running. recordFailure overwrites it on the next failure.
 				e.mu.Unlock()
 				m.emit(Event{ID: e.id, Status: StatusRunning, Detail: line})
-				if readyCh != nil {
-					select {
-					case readyCh <- struct{}{}:
-					default:
-					}
-				}
 				continue
 			}
 			e.mu.Unlock()

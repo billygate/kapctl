@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -182,40 +181,12 @@ func (l *Local) populateStatusTable() {
 }
 
 func (l *Local) handleNumeric(digit string) (*Local, tea.Cmd, bool) {
-	l.inputBuf += digit
-	idx, _ := strconv.Atoi(l.inputBuf)
-	listSize := len(l.list.VisibleItems())
-
-	if listSize < 10 {
-		if idx > 0 && idx <= listSize {
-			l.list.Select(idx - 1)
-			l.inputBuf = ""
-			m, c := l.handleSelect()
-			return m, c, true
-		}
-		l.inputBuf = ""
-		return l, nil, true
-	}
-
-	if len(l.inputBuf) == 2 {
-		if idx > 0 && idx <= listSize {
-			l.list.Select(idx - 1)
-			l.inputBuf = ""
-			m, c := l.handleSelect()
-			return m, c, true
-		}
-		l.inputBuf = ""
-		return l, nil, true
-	}
-	if idx*10 > listSize {
-		if idx > 0 && idx <= listSize {
-			l.list.Select(idx - 1)
-			l.inputBuf = ""
-			m, c := l.handleSelect()
-			return m, c, true
-		}
-		l.inputBuf = ""
-		return l, nil, true
+	buf, idx, committed := core.NumericJump(l.inputBuf, digit, len(l.list.VisibleItems()))
+	l.inputBuf = buf
+	if committed && idx > 0 {
+		l.list.Select(idx - 1)
+		m, c := l.handleSelect()
+		return m, c, true
 	}
 	return l, nil, true
 }

@@ -175,7 +175,8 @@ func (m *Manager) SetClock(c Clock) {
 	m.clock = c
 }
 
-// Events returns the channel of status transitions. Closed by Close().
+// Events returns the channel of status transitions. The channel is
+// never closed; it lives for the Manager's (i.e. the app's) lifetime.
 func (m *Manager) Events() <-chan Event { return m.events }
 
 // entry is the manager-private wrapper around a running cmd.
@@ -199,7 +200,6 @@ type entry struct {
 	podLabels     map[string]string
 	tcpFailStreak int
 
-	cmd    *exec.Cmd
 	cancel context.CancelFunc
 	doneCh chan struct{}
 }
@@ -321,12 +321,13 @@ func (m *Manager) Stop(id string) error {
 		return fmt.Errorf("portfwd: no such entry %q", id)
 	}
 	e.mu.Lock()
-	if e.status == StatusStopped || e.status == StatusErrored {
-		e.mu.Unlock()
-		return nil
+	alreadySettled := e.status == StatusStopped || e.status == StatusErrored
+	if !alreadySettled {
+		e.status = StatusStopped
 	}
-	e.status = StatusStopped
 	e.mu.Unlock()
+	// Cancel unconditionally: settled entries have no supervisor left,
+	// but releasing the context is free and keeps every path symmetric.
 	e.cancel()
 	return nil
 }
@@ -339,6 +340,7 @@ func (m *Manager) Remove(id string) {
 	if e, ok := m.entries[id]; ok {
 		s := e.statusRead()
 		if s == StatusStopped || s == StatusErrored {
+			e.cancel()
 			delete(m.entries, id)
 		}
 	}

@@ -29,7 +29,7 @@ func listenLocal(t *testing.T) (net.Listener, int) {
 
 func TestIsLocalPortFree_Occupied(t *testing.T) {
 	l, port := listenLocal(t)
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	if err := IsLocalPortFree(port); err == nil {
 		t.Errorf("IsLocalPortFree(%d) = nil, want error", port)
 	}
@@ -62,17 +62,17 @@ func TestFindFreeLocalPort_StartFree(t *testing.T) {
 func TestFindFreeLocalPort_BumpsPastOccupied(t *testing.T) {
 	// Occupy three consecutive ports: start, start+1, start+2.
 	l1, start := listenLocal(t)
-	defer l1.Close()
+	defer func() { _ = l1.Close() }()
 	l2, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(start+1)))
 	if err != nil {
 		t.Skipf("could not bind start+1=%d: %v", start+1, err)
 	}
-	defer l2.Close()
+	defer func() { _ = l2.Close() }()
 	l3, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(start+2)))
 	if err != nil {
 		t.Skipf("could not bind start+2=%d: %v", start+2, err)
 	}
-	defer l3.Close()
+	defer func() { _ = l3.Close() }()
 
 	got, err := FindFreeLocalPort(start, 10)
 	if err != nil {

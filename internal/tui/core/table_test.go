@@ -79,6 +79,26 @@ func TestTableSetItemsToEmptyDoesNotPanic(t *testing.T) {
 	}
 }
 
+// A SetItems with an empty slice clamps the inner cursor to -1; a
+// later SetItems with data must land the cursor back on row 0 so
+// SelectedItem() works without requiring a movement key first.
+func TestTableSetItemsRecoversCursorAfterEmpty(t *testing.T) {
+	s := newTestTableStyles()
+	tt := NewTable(s, []table.Column{{Title: "NAME", Width: 20}})
+	tt.SetSize(40, 5)
+
+	tt.SetItems(nil) // e.g. step entered before the async load completes
+	tt.SetItems([]RowProvider{noncomparable{Name: "pg-0"}})
+
+	sel := tt.SelectedItem()
+	if sel == nil {
+		t.Fatal("SelectedItem() = nil after data arrived, want first row")
+	}
+	if sel.FilterValue() != "pg-0" {
+		t.Errorf("SelectedItem() = %q, want pg-0", sel.FilterValue())
+	}
+}
+
 func TestTableSetItemsAndSelected(t *testing.T) {
 	s := newTestTableStyles()
 	tt := NewTable(s, []table.Column{{Title: "NAME", Width: 20}}, WithRowNumbers())

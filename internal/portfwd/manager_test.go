@@ -18,7 +18,7 @@ func fakeCmd(opts StartOpts) *exec.Cmd {
 		panic("portfwd tests require unix")
 	}
 	port := strconv.Itoa(opts.LocalPort)
-	script := `printf 'Forwarding from 127.0.0.1:` + port + ` -> ` + port + `\n' >&2; sleep 5`
+	script := `printf 'Forwarding from 127.0.0.1:` + port + ` -> ` + port + `\n'; sleep 5`
 	return exec.Command("/bin/sh", "-c", script)
 }
 

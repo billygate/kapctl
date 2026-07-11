@@ -283,6 +283,35 @@ func TestExplorerInitListStepNamespace(t *testing.T) {
 	}
 }
 
+// Selecting an item below the top of one step's list must not leak
+// that cursor index into the freshly built list of the next step.
+func TestExplorerCursorResetsOnStepTransition(t *testing.T) {
+	s := newTestStyles()
+	mk := &mockKubeClient{
+		contexts:   []string{"ctx-a"},
+		namespaces: []string{"billing", "default", "kube-system"},
+		pods:       []kube.PodInfo{{Name: "pg-0", Status: "Running"}},
+	}
+	e := NewExplorer(mk, nil, s, nil)
+	e.step = stepNamespace
+	e.ctx = "ctx-a"
+	e.namespaces = mk.namespaces
+	e.initList(80, 20)
+	e.list.Select(2) // cursor on "kube-system"
+
+	e, _ = e.handleSelect() // → stepPod (table-backed)
+	e.pods = mk.pods
+	e.initView(80, 20)
+	e, _ = e.handleTableSelect() // → stepAction
+
+	if e.step != stepAction {
+		t.Fatalf("step = %v, want stepAction", e.step)
+	}
+	if got := e.list.Index(); got != 0 {
+		t.Errorf("action list cursor = %d, want 0 (index leaked from namespace step)", got)
+	}
+}
+
 func TestExplorerRenderPodTable(t *testing.T) {
 	s := newTestStyles()
 	mk := &mockKubeClient{contexts: []string{"ctx-a"}}
@@ -571,7 +600,7 @@ func TestExplorerEnterPortFormWithBumpedLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
 	picked, _ := strconv.Atoi(portStr)
 
@@ -972,7 +1001,7 @@ func TestForwardsRendersReconnectingWithCountdown(t *testing.T) {
 		Attempts:           2,
 		ReconnectStartedAt: now.Add(-30 * time.Second),
 	}
-	row := NewFwdRowForTest(snap, now)
+	row := fwdRow{Snapshot: snap, now: now}
 	cells := row.Cells()
 	if cells[3] != "reconnecting 2/90s" {
 		t.Errorf("status cell = %q, want %q", cells[3], "reconnecting 2/90s")
@@ -1219,7 +1248,7 @@ func TestForwardsRendersRunningPlain(t *testing.T) {
 		Kind: portfwd.KindPod, Status: portfwd.StatusRunning,
 		StartedAt: now.Add(-30 * time.Second),
 	}
-	row := NewFwdRowForTest(snap, now)
+	row := fwdRow{Snapshot: snap, now: now}
 	cells := row.Cells()
 	if cells[3] != "running" {
 		t.Errorf("status cell = %q, want %q", cells[3], "running")

@@ -43,13 +43,6 @@ func (f fwdRow) Cells() table.Row {
 }
 func (f fwdRow) FilterValue() string { return f.Target }
 
-// NewFwdRowForTest exposes the row constructor with a fixed `now` for
-// deterministic tests of status-cell formatting. Production code calls
-// refresh() which uses time.Now().
-func NewFwdRowForTest(s portfwd.Snapshot, now time.Time) fwdRow {
-	return fwdRow{Snapshot: s, now: now}
-}
-
 // Forwards is the pane that lists active port-forward processes and
 // lets the user stop them. State is fully derived from the
 // *portfwd.Manager handed in at construction; this pane never starts

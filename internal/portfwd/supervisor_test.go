@@ -15,15 +15,36 @@ import (
 // times, then succeeds (prints "Forwarding from", sleeps).
 func flakyCmdBuilder(failuresBeforeSuccess int32) CmdBuilder {
 	var calls atomic.Int32
-	return func(opts StartOpts) *exec.Cmd {
+	return func(_ StartOpts) *exec.Cmd {
 		n := calls.Add(1)
 		if n <= failuresBeforeSuccess {
 			return exec.Command("/bin/sh", "-c", "exit 1")
 		}
 		// stable port template so the script reads cleanly
 		return exec.Command("/bin/sh", "-c",
-			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n' >&2; sleep 5`)
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n'; sleep 5`)
 	}
+}
+
+// Real kubectl prints the "Forwarding from ..." banner to stdout (its
+// IOStreams.Out), not stderr — ready-detection must watch stdout.
+func TestSupervisorDetectsReadyOnStdout(t *testing.T) {
+	m := NewManager(16, 64)
+	m.SetCmdBuilder(func(_ StartOpts) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c",
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n'; sleep 5`)
+	})
+
+	id, err := m.Start(StartOpts{
+		Context: "ctx", Namespace: "ns", Target: "pg-0",
+		Kind: KindPod, LocalPort: 5432, RemotePort: 5432,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+	_ = m.Stop(id)
 }
 
 func TestSupervisorReconnectsAfterSubprocessExit(t *testing.T) {
@@ -72,7 +93,7 @@ func TestSupervisorReconnectsWhenPodGoesAway(t *testing.T) {
 	// until killed by the supervisor.
 	okBuilder := func(_ StartOpts) *exec.Cmd {
 		return exec.Command("/bin/sh", "-c",
-			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n' >&2; sleep 30`)
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n'; sleep 30`)
 	}
 	m.SetCmdBuilder(okBuilder)
 
@@ -117,7 +138,7 @@ func TestSupervisorReconnectsOnUIDChange(t *testing.T) {
 
 	okBuilder := func(_ StartOpts) *exec.Cmd {
 		return exec.Command("/bin/sh", "-c",
-			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n' >&2; sleep 30`)
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n'; sleep 30`)
 	}
 	m.SetCmdBuilder(okBuilder)
 
@@ -168,7 +189,7 @@ func TestSupervisorReResolvesPodByLabels(t *testing.T) {
 		calls = append(calls, opts.Target)
 		callsMu.Unlock()
 		return exec.Command("/bin/sh", "-c",
-			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n' >&2; sleep 30`)
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n'; sleep 30`)
 	}
 	m.SetCmdBuilder(builder)
 
@@ -211,6 +232,114 @@ func TestSupervisorReResolvesPodByLabels(t *testing.T) {
 	}
 }
 
+// After a label-based re-resolution the supervisor must adopt the new
+// pod's UID — otherwise every subsequent liveness probe sees a UID
+// mismatch against the original pod and reconnects forever.
+func TestReResolvedPodDoesNotLoopOnUIDCheck(t *testing.T) {
+	m := NewManager(16, 64)
+	m.SetCmdBuilder(func(_ StartOpts) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c",
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n'; sleep 30`)
+	})
+
+	clk := newFakeClock(time.Now())
+	m.SetClock(clk)
+
+	fp := newFakeProber()
+	fp.resolveResp["ns/pg-0"] = PodRef{
+		Name: "pg-0", UID: "uid-1", Phase: "Running", Ready: true,
+		Labels: map[string]string{"app": "pg"},
+	}
+	fp.getNotFound["ns/pg-0"] = true   // pod gone on first liveness tick
+	fp.findResp["ns/app=pg,"] = "pg-1" // re-resolution returns pg-1 (UID uid-pg-1)
+	m.SetProberFactory(func(string) (Prober, error) { return fp, nil })
+
+	id, err := m.Start(StartOpts{
+		Context: "ctx", Namespace: "ns", Target: "pg-0",
+		Kind: KindPod, LocalPort: 5432, RemotePort: 5432,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+	clk.Advance(6 * time.Second) // liveness tick → pod gone
+	waitFor(t, m.Events(), StatusReconnecting, 3*time.Second)
+	clk.Advance(2 * time.Second) // past 1s backoff
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+
+	// Next liveness tick probes pg-1: its (new) UID must now be the
+	// expected one, so no reconnect may fire.
+	clk.Advance(6 * time.Second)
+	select {
+	case ev := <-m.Events():
+		if ev.Status == StatusReconnecting {
+			t.Fatalf("re-resolved pod triggered a spurious reconnect: %q", ev.Detail)
+		}
+	case <-time.After(500 * time.Millisecond):
+		// Good — forward stays Running.
+	}
+
+	_ = m.Stop(id)
+}
+
+// A probe-triggered reconnect (pod gone / UID change / TCP failures)
+// must terminate the still-running kubectl before launching the next
+// attempt — otherwise the old process keeps the local port bound and
+// leaks until the entry is stopped.
+func TestProbeReconnectTerminatesPreviousProcess(t *testing.T) {
+	m := NewManager(16, 64)
+
+	var callsMu sync.Mutex
+	var cmds []*exec.Cmd
+	builder := func(_ StartOpts) *exec.Cmd {
+		cmd := exec.Command("/bin/sh", "-c",
+			`printf 'Forwarding from 127.0.0.1:5432 -> 5432\n'; sleep 30`)
+		callsMu.Lock()
+		cmds = append(cmds, cmd)
+		callsMu.Unlock()
+		return cmd
+	}
+	m.SetCmdBuilder(builder)
+
+	clk := newFakeClock(time.Now())
+	m.SetClock(clk)
+
+	fp := newFakeProber()
+	fp.resolveResp["ns/pg-0"] = PodRef{
+		Name: "pg-0", UID: "uid-1", Phase: "Running", Ready: true,
+		Labels: map[string]string{"app": "pg"},
+	}
+	fp.getNotFound["ns/pg-0"] = true   // pod gone on first liveness tick
+	fp.findResp["ns/app=pg,"] = "pg-1" // re-resolution returns pg-1
+	m.SetProberFactory(func(string) (Prober, error) { return fp, nil })
+
+	id, err := m.Start(StartOpts{
+		Context: "ctx", Namespace: "ns", Target: "pg-0",
+		Kind: KindPod, LocalPort: 5432, RemotePort: 5432,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+	clk.Advance(6 * time.Second) // liveness tick → pod gone
+	waitFor(t, m.Events(), StatusReconnecting, 3*time.Second)
+	clk.Advance(2 * time.Second) // past 1s backoff
+	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
+
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if len(cmds) < 2 {
+		t.Fatalf("builder called %d times, want >= 2", len(cmds))
+	}
+	if cmds[0].ProcessState == nil {
+		t.Fatal("previous kubectl process was not reaped before the next attempt started")
+	}
+
+	_ = m.Stop(id)
+}
+
 func TestSupervisorTCPProbeReconnectsAfterThreeFailures(t *testing.T) {
 	m := NewManager(16, 64)
 
@@ -221,7 +350,7 @@ func TestSupervisorTCPProbeReconnectsAfterThreeFailures(t *testing.T) {
 	port := 1
 	builder := func(_ StartOpts) *exec.Cmd {
 		return exec.Command("/bin/sh", "-c",
-			`printf 'Forwarding from 127.0.0.1:`+strconv.Itoa(port)+` -> 5432\n' >&2; sleep 30`)
+			`printf 'Forwarding from 127.0.0.1:`+strconv.Itoa(port)+` -> 5432\n'; sleep 30`)
 	}
 	m.SetCmdBuilder(builder)
 
@@ -239,7 +368,7 @@ func TestSupervisorTCPProbeReconnectsAfterThreeFailures(t *testing.T) {
 	waitFor(t, m.Events(), StatusRunning, 3*time.Second)
 
 	// Three liveness ticks → three TCP failures → reconnect.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		clk.Advance(6 * time.Second)
 		// Give the supervisor a moment to process the tick.
 		time.Sleep(50 * time.Millisecond)
@@ -265,7 +394,7 @@ func TestSupervisorTCPProbeDebouncesSingleFailure(t *testing.T) {
 
 	builder := func(_ StartOpts) *exec.Cmd {
 		return exec.Command("/bin/sh", "-c",
-			`printf 'Forwarding from 127.0.0.1:`+strconv.Itoa(port)+` -> 5432\n' >&2; sleep 30`)
+			`printf 'Forwarding from 127.0.0.1:`+strconv.Itoa(port)+` -> 5432\n'; sleep 30`)
 	}
 	m.SetCmdBuilder(builder)
 
