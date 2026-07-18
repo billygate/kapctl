@@ -99,6 +99,31 @@ binary on `PATH`. Without it the tab is hidden and `up`/`down` print a
 note; `pause`/`resume`/`status` work via Docker directly. `spacebox`
 is not bundled — bring your own (or skip the feature).
 
+## MCP server
+
+`kapctl mcp` runs kapctl as a [Model Context Protocol](https://modelcontextprotocol.io)
+server over stdio, exposing read-only Kubernetes introspection
+(`list_contexts`, `list_namespaces`, `list_pods`, `describe_pod`,
+`get_pod_logs`) and local kind cluster status (`local_status`).
+
+Pass `--allow-local-control` to also expose the mutating local tools
+`local_pause`, `local_resume`, and (when the `spacebox` binary is
+installed) `local_up` / `local_down`. No tool can mutate real
+Kubernetes workloads.
+
+Register it with an MCP client (e.g. Claude Desktop / Claude Code):
+
+```json
+{
+  "mcpServers": {
+    "kapctl": {
+      "command": "kapctl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 ## License
 
 PolyForm Noncommercial 1.0.0 — see [LICENSE](LICENSE).
