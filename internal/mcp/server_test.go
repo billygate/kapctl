@@ -36,7 +36,9 @@ func (f *fakeKube) GetPodLogs(context.Context, string, string, kube.LogOptions) 
 // fakeDocker implements DockerAPI (unused fields return empty).
 type fakeDocker struct{}
 
-func (fakeDocker) GetStatus(context.Context) ([]docker.ContainerStatus, error) { return nil, nil }
+func (fakeDocker) GetStatus(context.Context) ([]docker.ContainerStatus, error) {
+	return []docker.ContainerStatus{{Name: "kind-control-plane", Status: "running", Age: "1h"}}, nil
+}
 func (fakeDocker) GetKindContainers(context.Context, string) ([]string, error) { return nil, nil }
 func (fakeDocker) PauseContainers(context.Context, []string) error             { return nil }
 func (fakeDocker) ResumeContainers(context.Context, []string) error            { return nil }
