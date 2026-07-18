@@ -2,12 +2,95 @@ package docker
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 )
+
+// writeContextMeta writes a Docker CLI context metadata file for name with the
+// given docker endpoint host, mirroring ~/.docker/contexts/meta/<sha256>/meta.json.
+func writeContextMeta(t *testing.T, configDir, name, host string) {
+	t.Helper()
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))
+	dir := filepath.Join(configDir, "contexts", "meta", digest)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := fmt.Sprintf(`{"Name":%q,"Endpoints":{"docker":{"Host":%q}}}`, name, host)
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHostForContextReadsMetaEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	writeContextMeta(t, dir, "orbstack", "unix:///Users/me/.orbstack/run/docker.sock")
+
+	host, err := hostForContext(dir, "orbstack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != "unix:///Users/me/.orbstack/run/docker.sock" {
+		t.Errorf("host = %q, want the orbstack socket", host)
+	}
+}
+
+func TestHostForContextDefaultIsNoOverride(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"", "default"} {
+		host, err := hostForContext(dir, name)
+		if err != nil {
+			t.Fatalf("name %q: unexpected error: %v", name, err)
+		}
+		if host != "" {
+			t.Errorf("name %q: host = %q, want empty (use SDK default)", name, host)
+		}
+	}
+}
+
+func TestHostForContextMissingContextErrors(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := hostForContext(dir, "nonexistent"); err == nil {
+		t.Error("expected error for missing context metadata, got nil")
+	}
+}
+
+func TestResolveContextNameFromConfig(t *testing.T) {
+	t.Setenv("DOCKER_CONTEXT", "")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"currentContext":"orbstack"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveContextName(dir); got != "orbstack" {
+		t.Errorf("resolveContextName = %q, want orbstack", got)
+	}
+}
+
+func TestResolveContextNameEnvWins(t *testing.T) {
+	t.Setenv("DOCKER_CONTEXT", "prod")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"),
+		[]byte(`{"currentContext":"orbstack"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveContextName(dir); got != "prod" {
+		t.Errorf("resolveContextName = %q, want prod (DOCKER_CONTEXT wins)", got)
+	}
+}
+
+func TestResolveContextNameNoConfig(t *testing.T) {
+	t.Setenv("DOCKER_CONTEXT", "")
+	if got := resolveContextName(t.TempDir()); got != "" {
+		t.Errorf("resolveContextName = %q, want empty when no config.json", got)
+	}
+}
 
 type fakeAPI struct {
 	listed     []container.Summary
