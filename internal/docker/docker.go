@@ -22,6 +22,7 @@ type clientAPI interface {
 	ContainerList(ctx context.Context, opts container.ListOptions) ([]container.Summary, error)
 	ContainerPause(ctx context.Context, containerID string) error
 	ContainerUnpause(ctx context.Context, containerID string) error
+	ContainerRestart(ctx context.Context, containerID string, opts container.StopOptions) error
 }
 
 // Client wraps the Docker SDK with the small surface kap needs.
@@ -155,6 +156,16 @@ func (c *Client) ResumeContainers(ctx context.Context, names []string) error {
 	for _, name := range names {
 		if err := c.cli.ContainerUnpause(ctx, name); err != nil {
 			return fmt.Errorf("failed to resume container %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// RestartContainers restarts each named container, stopping at the first error.
+func (c *Client) RestartContainers(ctx context.Context, names []string) error {
+	for _, name := range names {
+		if err := c.cli.ContainerRestart(ctx, name, container.StopOptions{}); err != nil {
+			return fmt.Errorf("failed to restart container %s: %w", name, err)
 		}
 	}
 	return nil

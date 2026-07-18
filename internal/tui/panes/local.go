@@ -205,6 +205,7 @@ func (l *Local) initList(w, availableH int) {
 		core.Item("down"),
 		core.Item("pause"),
 		core.Item("resume"),
+		core.Item("restart"),
 	}
 	l.list = list.New(items, core.NewItemDelegate(l.styles), w, availableH)
 	l.list.Title = "Local Cluster Actions"
@@ -270,6 +271,8 @@ func buildLocalCmd(action string) *exec.Cmd {
 		c = exec.Command("sh", "-c", "docker pause $(docker ps -q --filter label=io.x-k8s.kind.cluster)")
 	case "resume":
 		c = exec.Command("sh", "-c", "docker unpause $(docker ps -q --filter label=io.x-k8s.kind.cluster)")
+	case "restart":
+		c = exec.Command("sh", "-c", "docker restart $(docker ps -q --filter label=io.x-k8s.kind.cluster)")
 	}
 	if c != nil {
 		c.Stdout = os.Stdout

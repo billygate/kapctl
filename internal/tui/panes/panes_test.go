@@ -28,8 +28,9 @@ type mockDockerClient struct {
 func (m *mockDockerClient) GetKindContainers(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
-func (m *mockDockerClient) PauseContainers(_ context.Context, _ []string) error  { return nil }
-func (m *mockDockerClient) ResumeContainers(_ context.Context, _ []string) error { return nil }
+func (m *mockDockerClient) PauseContainers(_ context.Context, _ []string) error   { return nil }
+func (m *mockDockerClient) ResumeContainers(_ context.Context, _ []string) error  { return nil }
+func (m *mockDockerClient) RestartContainers(_ context.Context, _ []string) error { return nil }
 func (m *mockDockerClient) GetStatus(_ context.Context) ([]docker.ContainerStatus, error) {
 	return m.status, nil
 }
@@ -443,6 +444,7 @@ func TestBuildLocalCmdKnownActions(t *testing.T) {
 		{"down", false, "spacebox"},
 		{"pause", false, "sh"},
 		{"resume", false, "sh"},
+		{"restart", false, "sh"},
 		{"status", false, "docker"},
 		{"unknown", true, ""},
 	}

@@ -94,6 +94,31 @@ var resumeCmd = &cobra.Command{
 	},
 }
 
+var restartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "docker restart kind containers",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		cli, err := docker.NewClient()
+		if err != nil {
+			return err
+		}
+		names, err := cli.GetKindContainers(context.Background(), "running")
+		if err != nil {
+			return err
+		}
+		if len(names) == 0 {
+			fmt.Println(loadedStyles.Muted.Render("No running kind containers"))
+			return nil
+		}
+		fmt.Printf("%s %s\n", loadedStyles.Muted.Render("Restarting:"), loadedStyles.Value.Render(strings.Join(names, ", ")))
+		if err := cli.RestartContainers(context.Background(), names); err != nil {
+			return err
+		}
+		fmt.Printf("%s %s\n", loadedStyles.Master.Render("✓"), loadedStyles.Muted.Render(fmt.Sprintf("restarted %d container(s)", len(names))))
+		return nil
+	},
+}
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "show containers state",
@@ -130,5 +155,6 @@ func init() {
 	locCmd.AddCommand(downCmd)
 	locCmd.AddCommand(pauseCmd)
 	locCmd.AddCommand(resumeCmd)
+	locCmd.AddCommand(restartCmd)
 	locCmd.AddCommand(statusCmd)
 }

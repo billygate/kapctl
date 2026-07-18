@@ -97,7 +97,17 @@ type fakeAPI struct {
 	listFilter filters.Args
 	paused     []string
 	unpaused   []string
+	restarted  []string
 	pauseErr   error
+	restartErr error
+}
+
+func (f *fakeAPI) ContainerRestart(_ context.Context, name string, _ container.StopOptions) error {
+	if f.restartErr != nil {
+		return f.restartErr
+	}
+	f.restarted = append(f.restarted, name)
+	return nil
 }
 
 func (f *fakeAPI) ContainerList(_ context.Context, opts container.ListOptions) ([]container.Summary, error) {
@@ -194,6 +204,30 @@ func TestPauseContainersSuccess(t *testing.T) {
 	}
 	if len(f.paused) != 2 {
 		t.Errorf("paused = %v, want [a b]", f.paused)
+	}
+}
+
+func TestRestartContainersSuccess(t *testing.T) {
+	f := &fakeAPI{}
+	c := &Client{cli: f}
+	err := c.RestartContainers(context.Background(), []string{"a", "b"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(f.restarted) != 2 || f.restarted[0] != "a" || f.restarted[1] != "b" {
+		t.Errorf("restarted = %v, want [a b]", f.restarted)
+	}
+}
+
+func TestRestartContainersStopsOnFirstError(t *testing.T) {
+	f := &fakeAPI{restartErr: context.Canceled}
+	c := &Client{cli: f}
+	err := c.RestartContainers(context.Background(), []string{"a", "b"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if len(f.restarted) != 0 {
+		t.Errorf("restarted = %v, want none (first call errored)", f.restarted)
 	}
 }
 

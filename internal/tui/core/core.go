@@ -45,6 +45,7 @@ type DockerClient interface {
 	GetKindContainers(ctx context.Context, state string) ([]string, error)
 	PauseContainers(ctx context.Context, names []string) error
 	ResumeContainers(ctx context.Context, names []string) error
+	RestartContainers(ctx context.Context, names []string) error
 	GetStatus(ctx context.Context) ([]docker.ContainerStatus, error)
 }
 
