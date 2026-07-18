@@ -1,10 +1,12 @@
 .PHONY: build run test lint cover tidy clean
 BIN ?= bin/kapctl
 PKG := ./...
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X main.version=$(VERSION)
 
 build:
 	@mkdir -p $(dir $(BIN))
-	go build -o $(BIN) ./cmd/kapctl
+	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/kapctl
 
 run: build
 	$(BIN)
