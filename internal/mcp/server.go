@@ -1,8 +1,29 @@
 package mcp
 
 import (
+	"errors"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// codeServerClosing is the JSON-RPC error code the SDK returns while the
+// session is shutting down (there is no exported constant for it). It
+// arrives wrapped in a jsonrpc.Error when a client disconnects with a
+// request still in flight — a normal end of a stdio session, not a fault.
+const codeServerClosing = -32004
+
+// IsCleanShutdown reports whether a *mcp.Server Run error represents an
+// ordinary client disconnect rather than a real failure. A nil error and
+// the SDK's "server is closing" error (code -32004, which wraps the stdin
+// EOF) both count as clean, so callers can exit 0 without dumping usage.
+func IsCleanShutdown(err error) bool {
+	if err == nil {
+		return true
+	}
+	var we *jsonrpc.Error
+	return errors.As(err, &we) && we.Code == codeServerClosing
+}
 
 type server struct {
 	deps Deps

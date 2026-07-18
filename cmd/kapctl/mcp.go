@@ -26,7 +26,10 @@ var mcpCmd = &cobra.Command{
 	Long: "Run kapctl as a Model Context Protocol server on stdio. Exposes " +
 		"read-only Kubernetes introspection and local kind cluster status. " +
 		"Pass --allow-local-control to also expose pause/resume/up/down.",
-	RunE: func(_ *cobra.Command, _ []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		// A stdio client that disconnects is a normal end of the session,
+		// not a usage error — don't let Cobra print the usage block for it.
+		cmd.SilenceUsage = true
 		dockerClient, err := docker.NewClient()
 		if err != nil {
 			return err
@@ -42,7 +45,10 @@ var mcpCmd = &cobra.Command{
 			AllowLocalControl: mcpAllowLocalControl,
 			Version:           version,
 		})
-		return srv.Run(context.Background(), &mcp.StdioTransport{})
+		if err := srv.Run(context.Background(), &mcp.StdioTransport{}); !appmcp.IsCleanShutdown(err) {
+			return err
+		}
+		return nil
 	},
 }
 
