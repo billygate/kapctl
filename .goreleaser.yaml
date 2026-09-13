@@ -55,10 +55,10 @@ homebrew_casks:
     directory: Casks
     homepage: "https://github.com/billygate/kapctl"
     description: "Keyboard-first TUI for Kubernetes contexts and port-forwards"
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr",
-              args: ["-dr", "com.apple.quarantine", "#{staged_path}/kapctl"]
-          end
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "{{ `{{staged_path}}` }}/kapctl"]
+        end
+      end
